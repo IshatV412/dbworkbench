@@ -7,7 +7,7 @@ from typing import List, Dict, Any, Optional
 
 def load_config():
     """Load database configuration from config.yaml"""
-    with open("config.yaml", "r") as f:
+    with open("../config.yaml", "r") as f:
         return yaml.safe_load(f)
 
 
@@ -171,7 +171,7 @@ def execute_query(query: str, params: Optional[tuple] = None) -> int:
 
 if __name__ == "__main__":
 
-    write_query("INSERT INTO hello VALUES (%s, %s)", (2, 'parrva'))
+    # write_query("INSERT INTO hello VALUES (%s, %s)", (2, 'parrva'))
     
     results = read_query("SELECT * FROM hello")
     for result in results:
