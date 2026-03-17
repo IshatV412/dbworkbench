@@ -176,4 +176,38 @@ if __name__ == "__main__":
     results = read_query("SELECT * FROM hello")
     for result in results:
         print(result)
-    
+
+
+# ---------------------------------------------------------------------------
+# External interface functions consumed by the FastAPI backend.
+# These are stubs — replace with real implementations.
+# ---------------------------------------------------------------------------
+
+def executeQuery(sql: str):
+    """Execute a SQL statement. To be implemented by the SQL engine module."""
+    raise NotImplementedError("executeQuery not yet implemented")
+
+
+def validateSQL(sql: str):
+    """Validate a SQL statement. To be implemented by the SQL parser module."""
+    raise NotImplementedError("validateSQL not yet implemented")
+
+
+def generateAntiInsert(sql: str) -> str:
+    """Generate an anti-command for an INSERT. To be implemented externally."""
+    raise NotImplementedError("generateAntiInsert not yet implemented")
+
+
+def generateAntiUpdate(sql: str) -> str:
+    """Generate an anti-command for an UPDATE. To be implemented externally."""
+    raise NotImplementedError("generateAntiUpdate not yet implemented")
+
+
+def generateAntiDelete(sql: str) -> str:
+    """Generate an anti-command for a DELETE. To be implemented externally."""
+    raise NotImplementedError("generateAntiDelete not yet implemented")
+
+
+def validateAntiCommand(sql: str):
+    """Validate an anti-command. To be implemented externally."""
+    raise NotImplementedError("validateAntiCommand not yet implemented")
