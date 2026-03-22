@@ -1,18 +1,21 @@
-"""Pydantic request / response schemas for the API."""
+"""Pydantic request / response schemas for the API.
+
+Aligned with Django's ORM models (CommitEvent, InverseOperation,
+Snapshot, SnapshotPolicy, ConnectionProfile).
+"""
 
 from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
-from uuid import UUID
 
 from pydantic import BaseModel, Field
 
 
-# ── Query (raw execute) ──────────────────────────────────────────────────────
+# -- Query (read-only, no versioning) -----------------------------------------
 
 class ExecuteSQLRequest(BaseModel):
-    """Raw SQL to execute (SELECT, ad-hoc, etc.)."""
+    connection_profile_id: int
     sql: str
 
 
@@ -23,83 +26,61 @@ class ExecuteSQLResponse(BaseModel):
     status: str = "success"
 
 
-# ── Commit ────────────────────────────────────────────────────────────────────
-
-class CommitStepInput(BaseModel):
-    """A single SQL step inside a commit."""
-    sql: str
-    step_type: str = "DML"  # DML | DDL
-
+# -- Commit (versioned write) -------------------------------------------------
 
 class CreateCommitRequest(BaseModel):
-    """Create a new commit with one or more SQL steps."""
-    steps: list[CommitStepInput]
-    message: str | None = None
-
-
-class CommitStepResponse(BaseModel):
-    step_id: int
-    step_order: int
+    connection_profile_id: int
     sql_command: str
-    step_type: str
+    inverse_sql: str
 
 
 class CommitResponse(BaseModel):
-    commit_id: UUID
-    commit_number: int
-    hash: str
-    message: str | None
-    steps: list[CommitStepResponse] = Field(default_factory=list)
-    created_at: datetime
+    version_id: str
+    sql_command: str
+    status: str
+    timestamp: datetime
+    connection_profile_id: int
 
 
 class CommitListItem(BaseModel):
-    commit_id: UUID
-    commit_number: int
-    hash: str
-    message: str | None
-    created_at: datetime
+    version_id: str
+    sql_command: str
+    status: str
+    timestamp: datetime
 
 
-# ── Anti-command ──────────────────────────────────────────────────────────────
-
-class StoreAntiCommandRequest(BaseModel):
-    """Store an anti-command for a specific step in a commit."""
-    commit_id: UUID
-    step_id: int
-    anti_sql: str
-
+# -- Anti-command (inverse operation retrieval) --------------------------------
 
 class AntiCommandResponse(BaseModel):
-    id: int
-    commit_id: UUID
-    step_id: int
-    anti_sql: str
+    version_id: str
+    inverse_sql: str
+    commit_version_id: str
 
 
-# ── Snapshot ──────────────────────────────────────────────────────────────────
+# -- Snapshot ------------------------------------------------------------------
 
 class SnapshotResponse(BaseModel):
-    id: int
-    commit_number: int
+    snapshot_id: str
+    version_id: str
     s3_key: str
     created_at: datetime
+    connection_profile_id: int
 
 
 class SnapshotFrequencyRequest(BaseModel):
-    """Update snapshot frequency (1–5)."""
-    frequency: int = Field(..., ge=1, le=5)
+    connection_profile_id: int
+    frequency: int = Field(..., ge=1)
 
 
 class SnapshotFrequencyResponse(BaseModel):
     frequency: int
 
 
-# ── Rollback ──────────────────────────────────────────────────────────────────
+# -- Rollback ------------------------------------------------------------------
 
 class RollbackRequest(BaseModel):
-    """Roll back to a specific commit."""
-    target_commit_id: UUID
+    connection_profile_id: int
+    target_version_id: str
 
 
 class RollbackResponse(BaseModel):

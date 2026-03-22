@@ -1,100 +1,87 @@
-"""Rollback service — restore database to a previous commit.
+"""Rollback service — restore user's database to a previous version.
 
-Algorithm
----------
-1. Look up the target commit's ``commit_number``.
-2. Find the nearest snapshot whose ``commit_number ≤ target``.
-3. Restore that snapshot via ``psql``.
-4. Fetch every anti-command for commits **after** the target (in reverse
-   order) and execute them to undo the later changes.
-5. Return a summary.
+Algorithm (from context.md):
+1. Find the nearest Snapshot before the target version
+2. Restore that snapshot on the user's external DB
+3. Replay InverseOperations between the snapshot and the target
+   version in reverse chronological order
+4. If any inverse operation fails, rollback impact is limited to
+   the interval between two adjacent snapshots
 """
 
 from __future__ import annotations
 
-from fastapi_backend.app.db.connection import get_connection, release_connection
-from fastapi_backend.app.db import metadata_queries as mq
-from fastapi_backend.app.services.snapshot_service import restore_snapshot
+from authentication.models import User
+from connections.models import ConnectionProfile
+from core.models import CommitEvent, InverseOperation, Snapshot
+
+from fastapi_backend.app.db.connection import get_user_connection
+from fastapi_backend.app.services.snapshot_service import restore_snapshot_data
 
 
-def rollback_to_commit(target_commit_id: str) -> dict:
-    """
-    Roll the database back to the state it was in *after* the given commit.
+def rollback_to_version(
+    user_id: int,
+    connection_profile_id: int,
+    target_version_id: str,
+) -> dict:
+    """Roll the user's database back to the state after the given commit."""
+    user = User.objects.get(id=user_id)
+    profile = ConnectionProfile.objects.get(id=connection_profile_id, user=user)
 
-    Parameters
-    ----------
-    target_commit_id : str (UUID)
-        The commit to roll back to.  The user picks this from the UI.
+    # 1. Resolve target commit
+    try:
+        target_commit = CommitEvent.objects.get(
+            version_id=target_version_id,
+            user=user,
+            connection_profile=profile,
+        )
+    except CommitEvent.DoesNotExist:
+        raise ValueError(f"Commit {target_version_id} not found")
 
-    Returns
-    -------
-    dict  with rolled_back_to, snapshot_restored, anti_commands_applied, status.
-    """
-    conn = get_connection()
-    snapshot_info: str | None = None
+    # 2. Find nearest snapshot at or before the target commit
+    snapshot = Snapshot.objects.filter(
+        connection_profile=profile,
+        created_at__lte=target_commit.timestamp,
+    ).order_by("-created_at").first()
+
+    snapshot_info = None
+
+    # 3. Restore snapshot on the user's external database
+    if snapshot:
+        restore_snapshot_data(snapshot.s3_key, profile)
+        snapshot_info = snapshot.s3_key
+
+    # 4. Get all commits AFTER the target, in reverse chronological order
+    commits_after = CommitEvent.objects.filter(
+        connection_profile=profile,
+        user=user,
+        timestamp__gt=target_commit.timestamp,
+    ).order_by("-timestamp")
+
+    # 5. Apply inverse operations on the user's external database
+    conn = get_user_connection(profile)
     applied = 0
     try:
         cur = conn.cursor()
-
-        # 1. Resolve target commit
-        cur.execute(mq.SELECT_COMMIT_BY_ID, (target_commit_id,))
-        target = cur.fetchone()
-        if target is None:
-            raise ValueError(f"Commit {target_commit_id} not found")
-
-        target_number = target[1]  # commit_number
-
-        # 2. Ensure we're not already at or ahead of the target
-        cur.execute(mq.SELECT_LATEST_COMMIT_NUMBER)
-        current_number = cur.fetchone()[0]
-        if target_number >= current_number:
-            raise ValueError(
-                f"Target commit #{target_number} is not behind the current "
-                f"commit #{current_number}"
-            )
-
-        # 3. Find nearest snapshot ≤ target
-        cur.execute(mq.SELECT_NEAREST_SNAPSHOT_BEFORE, (target_number,))
-        snap_row = cur.fetchone()
-
-        # We are done with metadata lookups on this connection. End the
-        # transaction and release before performing any out-of-band restore.
+        for commit in commits_after:
+            try:
+                inverse = commit.inverse_operation
+                cur.execute(inverse.inverse_sql)
+                applied += 1
+            except InverseOperation.DoesNotExist:
+                # Should never happen per the atomic write guarantee,
+                # but limit blast radius per REQ-11
+                continue
         conn.commit()
-        cur.close()
-        release_connection(conn)
-        conn = None
-
-        # Perform the snapshot restore out-of-band (via psql, etc.).
-        if snap_row is not None:
-            snapshot_s3_key = snap_row[2]
-            restore_snapshot(snapshot_s3_key)
-            snapshot_info = snapshot_s3_key
-
-        # Obtain a fresh connection for fetching and applying anti-commands
-        conn = get_connection()
-        cur = conn.cursor()
-
-        # 4. Fetch anti-commands for commits AFTER the target, reversed
-        cur.execute(mq.SELECT_ANTI_COMMANDS_FOR_ROLLBACK, (target_number,))
-        anti_rows = cur.fetchall()
-
-        for row in anti_rows:
-            anti_sql = row[3]
-            cur.execute(anti_sql)
-            applied += 1
-
-        conn.commit()
-
-        return {
-            "rolled_back_to": target_commit_id,
-            "snapshot_restored": snapshot_info,
-            "anti_commands_applied": applied,
-            "status": "success",
-        }
     except Exception:
-        if conn is not None:
-            conn.rollback()
+        conn.rollback()
         raise
     finally:
-        if conn is not None:
-            release_connection(conn)
+        conn.close()
+
+    return {
+        "rolled_back_to": target_version_id,
+        "snapshot_restored": snapshot_info,
+        "anti_commands_applied": applied,
+        "status": "success",
+    }

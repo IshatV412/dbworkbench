@@ -1,189 +1,127 @@
-"""Commit service — create, list, and retrieve versioned commits.
+"""Commit service — execute SQL on the user's DB and record via Django ORM.
 
-A commit wraps one or more SQL steps.  Each commit is assigned a
-sequential commit_number, a SHA-256 hash, and an optional message.
-After creating a commit the service checks if the snapshot frequency
-threshold has been hit and triggers an auto-snapshot if so.
+Flow:
+1. Validate the SQL command
+2. Execute it on the user's external database
+3. Call Django's record_commit() to atomically persist
+   CommitEvent + InverseOperation + conditional Snapshot
+4. If a snapshot was created, trigger the actual pg_dump + S3 upload
 """
 
 from __future__ import annotations
 
-import re
+import uuid
 
-from fastapi_backend.app.db.connection import get_connection, release_connection
-from fastapi_backend.app.db import metadata_queries as mq
-from fastapi_backend.app.utils.hashing import generate_commit_hash
-from fastapi_backend.app.services.snapshot_service import (
-    get_snapshot_frequency,
-    create_snapshot,
-)
+from authentication.models import User
+from connections.models import ConnectionProfile
+from core.models import CommitEvent, Snapshot
+from core.services import record_commit
 
-_ALLOWED_SQL_KEYWORDS = {
-    "SELECT",
-    "INSERT",
-    "UPDATE",
-    "DELETE",
-    # Add other safe/expected keywords here if needed, e.g. "ALTER", "CREATE", etc.
-}
+from fastapi_backend.app.db.connection import get_user_connection
+from fastapi_backend.app.services.snapshot_service import upload_snapshot_data
 
 
-def _validate_sql_step(sql: str, step_type: str) -> None:
-    """
-    Perform basic validation of a user-provided SQL step before execution.
+_WRITE_KEYWORDS = {"INSERT", "UPDATE", "DELETE", "ALTER", "CREATE", "DROP", "TRUNCATE"}
 
-    Currently it:
-    - Ensures there is at least one non-empty token.
-    - Ensures the first token is in an allowlist of SQL keywords.
-    - Rejects multiple statements separated by semicolons (except an optional
-      trailing semicolon).
-    """
-    if not isinstance(sql, str):
-        raise ValueError("SQL step must be a string.")
 
+def _validate_write_sql(sql: str) -> None:
+    """Ensure the SQL is a single write statement."""
     stripped = sql.strip()
     if not stripped:
-        raise ValueError("SQL step may not be empty.")
+        raise ValueError("SQL command may not be empty")
 
-    # Disallow stacked statements like "UPDATE ...; DELETE ...;"
+    first_token = stripped.split(None, 1)[0].upper()
+    if first_token == "SELECT":
+        raise ValueError("SELECT queries are not tracked — use /query/execute instead")
+    if first_token not in _WRITE_KEYWORDS:
+        raise ValueError(f"SQL command '{first_token}' is not allowed for commits")
+
     parts = [p for p in stripped.split(";") if p.strip()]
     if len(parts) > 1:
-        raise ValueError("Only a single SQL statement per step is allowed.")
-
-    # Grab the first word (keyword) and validate it.
-    match = re.match(r"^([a-zA-Z]+)", stripped)
-    if not match:
-        raise ValueError("Could not determine SQL command keyword.")
-
-    keyword = match.group(1).upper()
-    if keyword not in _ALLOWED_SQL_KEYWORDS:
-        raise ValueError(f"SQL command '{keyword}' is not allowed for commit steps.")
+        raise ValueError("Only a single SQL statement per commit is allowed")
 
 
-def create_commit(steps: list[dict], message: str | None = None) -> dict:
-    """
-    Execute every SQL step, persist the commit + steps, hash it, and
-    optionally trigger a snapshot.
+def create_commit(
+    user_id: int,
+    connection_profile_id: int,
+    sql_command: str,
+    inverse_sql: str,
+) -> dict:
+    """Execute SQL on user's DB, then persist commit atomically via Django."""
+    user = User.objects.get(id=user_id)
+    profile = ConnectionProfile.objects.get(id=connection_profile_id, user=user)
 
-    Parameters
-    ----------
-    steps : list[dict]
-        Each dict has ``sql`` (str) and ``step_type`` (str, default "DML").
-    message : str | None
-        Optional human-readable commit message.
+    _validate_write_sql(sql_command)
+    version_id = str(uuid.uuid4())
 
-    Returns
-    -------
-    dict  with commit_id, commit_number, hash, message, steps, created_at.
-    """
-    conn = get_connection()
+    # 1. Execute on the user's external database
+    conn = get_user_connection(profile)
     try:
-        conn.autocommit = False
         cur = conn.cursor()
-
-        # 1. Placeholder hash — we update it after we know commit_number + timestamp
-        cur.execute(mq.INSERT_COMMIT, ("pending", message))
-        commit_id, commit_number, created_at = cur.fetchone()
-
-        # 2. Execute and record each step
-        step_results: list[dict] = []
-        for idx, step in enumerate(steps, start=1):
-            sql = step["sql"]
-            step_type = step.get("step_type", "DML")
-
-            # Validate and then execute the actual user SQL on the database
-            _validate_sql_step(sql=sql, step_type=step_type)
-            cur.execute(sql)
-
-            # Record metadata
-            cur.execute(mq.INSERT_COMMIT_STEP, (str(commit_id), idx, sql, step_type))
-            step_id = cur.fetchone()[0]
-            step_results.append(
-                {
-                    "step_id": step_id,
-                    "step_order": idx,
-                    "sql_command": sql,
-                    "step_type": step_type,
-                }
-            )
-
-        # 3. Generate deterministic hash and update the commit row
-        sql_list = [s["sql"] for s in steps]
-        commit_hash = generate_commit_hash(commit_number, str(created_at), sql_list)
-        cur.execute(
-            "UPDATE commits SET hash = %s WHERE commit_id = %s",
-            (commit_hash, str(commit_id)),
-        )
-
-        # 4. Auto-snapshot if we've hit the frequency threshold
-        frequency = get_snapshot_frequency(cur=cur)
-        if commit_number % frequency == 0:
-            create_snapshot(conn=conn, commit_number=commit_number)
-
+        cur.execute(sql_command)
         conn.commit()
-        return {
-            "commit_id": str(commit_id),
-            "commit_number": commit_number,
-            "hash": commit_hash,
-            "message": message,
-            "steps": step_results,
-            "created_at": created_at.isoformat(),
-        }
     except Exception:
         conn.rollback()
         raise
     finally:
-        conn.autocommit = True
-        release_connection(conn)
+        conn.close()
+
+    # 2. Record atomically via Django (CommitEvent + InverseOperation + Snapshot)
+    commit = record_commit(
+        version_id=version_id,
+        sql_command=sql_command,
+        inverse_sql=inverse_sql,
+        user=user,
+        connection_profile=profile,
+        status="success",
+    )
+
+    # 3. If record_commit() created a snapshot record, do the actual pg_dump + S3 upload
+    snapshot = Snapshot.objects.filter(
+        version_id=version_id,
+        connection_profile=profile,
+    ).first()
+    if snapshot:
+        upload_snapshot_data(profile, snapshot.s3_key)
+
+    return {
+        "version_id": commit.version_id,
+        "sql_command": commit.sql_command,
+        "status": commit.status,
+        "timestamp": commit.timestamp,
+        "connection_profile_id": profile.id,
+    }
 
 
-def list_commits() -> list[dict]:
-    """Return every commit ordered by commit_number."""
-    conn = get_connection()
-    try:
-        cur = conn.cursor()
-        cur.execute(mq.SELECT_ALL_COMMITS)
-        return [
-            {
-                "commit_id": str(r[0]),
-                "commit_number": r[1],
-                "hash": r[2],
-                "message": r[3],
-                "created_at": r[4].isoformat(),
-            }
-            for r in cur.fetchall()
-        ]
-    finally:
-        release_connection(conn)
+def list_commits(user_id: int, connection_profile_id: int) -> list[dict]:
+    """Return all commits for a user+profile, ordered by timestamp."""
+    commits = CommitEvent.objects.filter(
+        user_id=user_id,
+        connection_profile_id=connection_profile_id,
+    ).order_by("timestamp")
 
-
-def get_commit(commit_id: str) -> dict | None:
-    """Return a single commit with its steps."""
-    conn = get_connection()
-    try:
-        cur = conn.cursor()
-        cur.execute(mq.SELECT_COMMIT_BY_ID, (commit_id,))
-        row = cur.fetchone()
-        if row is None:
-            return None
-
-        cur.execute(mq.SELECT_STEPS_BY_COMMIT, (commit_id,))
-        steps = [
-            {
-                "step_id": s[0],
-                "step_order": s[2],
-                "sql_command": s[3],
-                "step_type": s[4],
-            }
-            for s in cur.fetchall()
-        ]
-
-        return {
-            "commit_id": str(row[0]),
-            "commit_number": row[1],
-            "hash": row[2],
-            "message": row[3],
-            "steps": steps,
-            "created_at": row[4].isoformat(),
+    return [
+        {
+            "version_id": c.version_id,
+            "sql_command": c.sql_command,
+            "status": c.status,
+            "timestamp": c.timestamp,
         }
-    finally:
-        release_connection(conn)
+        for c in commits
+    ]
+
+
+def get_commit(user_id: int, version_id: str) -> dict | None:
+    """Return a single commit by version_id, or None."""
+    try:
+        c = CommitEvent.objects.get(version_id=version_id, user_id=user_id)
+    except CommitEvent.DoesNotExist:
+        return None
+
+    return {
+        "version_id": c.version_id,
+        "sql_command": c.sql_command,
+        "status": c.status,
+        "timestamp": c.timestamp,
+        "connection_profile_id": c.connection_profile_id,
+    }

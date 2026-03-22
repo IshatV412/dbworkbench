@@ -28,6 +28,15 @@ uv.lock
 # Certs
 certs/
 
-#django
+# Django
 *.pyc
 db.sqlite3
+*.log
+
+# Migrations are version-controlled — don't ignore them
+
+# Snapshot temp files
+*.sql.tmp
+
+# Claude Code
+.claude/
