@@ -15,6 +15,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from fastapi_backend.app.routes.auth_routes import router as auth_router
+from fastapi_backend.app.routes.connection_routes import router as connection_router
 from fastapi_backend.app.routes.query_routes import router as query_router
 from fastapi_backend.app.routes.commit_routes import router as commit_router
 from fastapi_backend.app.routes.anticommand_routes import router as anticommand_router
@@ -62,6 +64,8 @@ app.add_middleware(
 )
 
 # Routers
+app.include_router(auth_router)
+app.include_router(connection_router)
 app.include_router(query_router)
 app.include_router(commit_router)
 app.include_router(anticommand_router)

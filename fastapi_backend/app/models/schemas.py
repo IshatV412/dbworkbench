@@ -12,6 +12,58 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
+# -- Auth ----------------------------------------------------------------------
+
+class RegisterRequest(BaseModel):
+    username: str
+    password: str
+    email: str = ""
+
+
+class RegisterResponse(BaseModel):
+    id: int
+    username: str
+
+
+class TokenObtainRequest(BaseModel):
+    username: str
+    password: str
+
+
+class TokenRefreshRequest(BaseModel):
+    refresh: str
+
+
+# -- ConnectionProfile ---------------------------------------------------------
+
+class CreateConnectionProfileRequest(BaseModel):
+    name: str
+    host: str
+    port: int = 5432
+    database_name: str
+    db_username: str
+    db_password: str
+
+
+class UpdateConnectionProfileRequest(BaseModel):
+    name: str | None = None
+    host: str | None = None
+    port: int | None = None
+    database_name: str | None = None
+    db_username: str | None = None
+    db_password: str | None = None
+
+
+class ConnectionProfileResponse(BaseModel):
+    id: int
+    name: str
+    host: str
+    port: int
+    database_name: str
+    db_username: str
+    created_at: datetime
+
+
 # -- Query (read-only, no versioning) -----------------------------------------
 
 class ExecuteSQLRequest(BaseModel):

@@ -7,6 +7,8 @@ Algorithm (from context.md):
    version in reverse chronological order
 4. If any inverse operation fails, rollback impact is limited to
    the interval between two adjacent snapshots
+5. Delete stale CommitEvent records for all commits after the target
+   so the commit history stays clean (InverseOperations cascade-delete)
 """
 
 from __future__ import annotations
@@ -58,6 +60,9 @@ def rollback_to_version(
         timestamp__gt=target_commit.timestamp,
     ).order_by("-timestamp")
 
+    # Capture IDs before iteration so we can delete them after
+    stale_ids = list(commits_after.values_list("id", flat=True))
+
     # 5. Apply inverse operations on the user's external database
     conn = get_user_connection(profile)
     applied = 0
@@ -78,6 +83,10 @@ def rollback_to_version(
         raise
     finally:
         conn.close()
+
+    # 6. Delete stale commit records so history stays clean
+    #    InverseOperations cascade-delete automatically
+    CommitEvent.objects.filter(id__in=stale_ids).delete()
 
     return {
         "rolled_back_to": target_version_id,
