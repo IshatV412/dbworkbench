@@ -88,6 +88,7 @@ class CreateCommitRequest(BaseModel):
 
 class CommitResponse(BaseModel):
     version_id: str
+    seq: int
     sql_command: str
     status: str
     timestamp: datetime
@@ -96,6 +97,7 @@ class CommitResponse(BaseModel):
 
 class CommitListItem(BaseModel):
     version_id: str
+    seq: int
     sql_command: str
     status: str
     timestamp: datetime

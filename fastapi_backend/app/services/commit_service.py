@@ -86,6 +86,7 @@ def create_commit(
 
     return {
         "version_id": commit.version_id,
+        "seq": commit.seq,
         "sql_command": commit.sql_command,
         "status": commit.status,
         "timestamp": commit.timestamp,
@@ -94,15 +95,16 @@ def create_commit(
 
 
 def list_commits(user_id: int, connection_profile_id: int) -> list[dict]:
-    """Return all commits for a user+profile, ordered by timestamp."""
+    """Return all commits for a user+profile, ordered by seq."""
     commits = CommitEvent.objects.filter(
         user_id=user_id,
         connection_profile_id=connection_profile_id,
-    ).order_by("timestamp")
+    ).order_by("seq")
 
     return [
         {
             "version_id": c.version_id,
+            "seq": c.seq,
             "sql_command": c.sql_command,
             "status": c.status,
             "timestamp": c.timestamp,
@@ -120,6 +122,7 @@ def get_commit(user_id: int, version_id: str) -> dict | None:
 
     return {
         "version_id": c.version_id,
+        "seq": c.seq,
         "sql_command": c.sql_command,
         "status": c.status,
         "timestamp": c.timestamp,
