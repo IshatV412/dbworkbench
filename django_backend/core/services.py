@@ -1,11 +1,22 @@
 from django.db import transaction
+from django.db.models import Max
 from .models import CommitEvent, InverseOperation, Snapshot, SnapshotPolicy
 
 
 def record_commit(version_id, sql_command, inverse_sql, user, connection_profile, status):
     with transaction.atomic():
+        # Compute the next seq scoped to this connection profile.
+        # select_for_update() on the aggregate is not possible, but the
+        # UniqueConstraint on (connection_profile, seq) acts as the safety
+        # net — a duplicate seq will raise IntegrityError and roll back.
+        last_seq = CommitEvent.objects.filter(
+            connection_profile=connection_profile,
+        ).aggregate(Max('seq'))['seq__max']
+        next_seq = (last_seq or 0) + 1
+
         commit = CommitEvent.objects.create(
             version_id=version_id,
+            seq=next_seq,
             sql_command=sql_command,
             status=status,
             user=user,

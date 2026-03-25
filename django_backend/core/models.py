@@ -6,6 +6,7 @@ from connections.models import ConnectionProfile
 
 class CommitEvent(models.Model):
     version_id = models.CharField(max_length=255, db_index=True, unique=True)
+    seq = models.PositiveIntegerField(db_index=True, default=0)
     timestamp = models.DateTimeField(auto_now_add=True)
     sql_command = models.TextField()
     status = models.CharField(max_length=20)
@@ -23,6 +24,13 @@ class CommitEvent(models.Model):
     class Meta:
         indexes = [
             models.Index(fields=['user', 'timestamp']),
+            models.Index(fields=['connection_profile', 'seq']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['connection_profile', 'seq'],
+                name='unique_seq_per_profile',
+            )
         ]
 
     def __str__(self):

@@ -4,7 +4,7 @@ from .models import CommitEvent, InverseOperation, Snapshot, SnapshotPolicy
 
 @admin.register(CommitEvent)
 class CommitEventAdmin(admin.ModelAdmin):
-    list_display = ('version_id', 'user', 'timestamp', 'status', 'connection_profile')
+    list_display = ('version_id', 'seq', 'user', 'timestamp', 'status', 'connection_profile')
     list_filter = ('user', 'status', 'timestamp')
     search_fields = ('sql_command', 'version_id')
 
