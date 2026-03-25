@@ -2,9 +2,17 @@
 __pycache__/
 *.py[cod]
 *.pyo
+*.pyd
 *.egg-info/
 dist/
 build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.ipynb_checkpoints/
 
 # Virtual environments
 .venv/
@@ -13,6 +21,7 @@ venv/
 # Config / secrets
 *.yaml
 .env
+.env.*
 
 # IDE
 .vscode/
@@ -22,15 +31,13 @@ venv/
 .DS_Store
 Thumbs.db
 
-# UV
-uv.lock
-
 # Certs
 certs/
 
 # Django
 *.pyc
 db.sqlite3
+*.sqlite3
 *.log
 
 # Migrations are version-controlled — don't ignore them
