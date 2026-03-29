@@ -25,8 +25,8 @@ os.environ.setdefault("DB_HOST", "localhost")
 os.environ.setdefault("DB_PORT", "5432")
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "django_backend.settings")
 
-# Fernet key (valid 32-byte url-safe base64)
-os.environ.setdefault("FERNET_KEY", "CkVRBd4IRH6Yzpz4rdiHvX8zNIttahMKesxggjVm5Ww=")
+# Fernet key — test-only, not a real secret
+os.environ.setdefault("FERNET_KEY", "fCYdNhBhGgcHeBl7f5fqRet1pfLQdaflzoZAOLoysvM=")
 
 # JWT secret shared between Django and FastAPI
 os.environ.setdefault("JWT_SECRET_KEY", "test-jwt-secret-for-pytest")

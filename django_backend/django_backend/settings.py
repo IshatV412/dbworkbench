@@ -3,9 +3,13 @@ from pathlib import Path
 from datetime import timedelta
 from dotenv import load_dotenv
 
-load_dotenv(Path(__file__).resolve().parent / '.env')
-
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Look for .env in both django_backend/django_backend/ and django_backend/
+for _env_path in [Path(__file__).resolve().parent / '.env', BASE_DIR / '.env']:
+    if _env_path.exists():
+        load_dotenv(_env_path)
+        break
 
 SECRET_KEY = os.environ.get('SECRET_KEY')
 DEBUG = True
