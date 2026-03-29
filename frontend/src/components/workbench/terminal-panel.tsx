@@ -1,47 +1,78 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useWorkspace } from "@/lib/workspace-context";
+
+const XtermTerminal = dynamic(
+  () => import("@/components/workbench/xterm-terminal").then((m) => m.XtermTerminal),
+  {
+    ssr: false,
+    loading: () => (
+      <div style={{ padding: 12, color: "var(--muted-foreground)", fontSize: 12 }}>
+        Loading terminal...
+      </div>
+    ),
+  }
+);
+
+const WS_BASE = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(
+  /^http/,
+  "ws"
+);
 
 export function TerminalPanel() {
   const { activeConnection } = useWorkspace();
+  const token =
+    typeof window !== "undefined" ? localStorage.getItem("access_token") ?? "" : "";
 
   return (
-    <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "var(--terminal-bg)", overflow: "hidden" }}>
+    <div
+      style={{
+        height: "100%",
+        display: "flex",
+        flexDirection: "column",
+        background: "var(--terminal-bg)",
+        overflow: "hidden",
+      }}
+    >
       {/* Header */}
       <div
-        className="flex items-center gap-2 px-3 py-1 shrink-0"
-        style={{ background: "var(--toolbar-bg)", borderBottom: "1px solid var(--border)" }}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          padding: "0 12px",
+          height: 30,
+          flexShrink: 0,
+          background: "var(--toolbar-bg)",
+          borderBottom: "1px solid var(--border)",
+        }}
       >
-        <span className="text-xs font-medium" style={{ color: "var(--muted-foreground)" }}>
+        <span style={{ fontSize: 11, fontWeight: 600, color: "var(--muted-foreground)", letterSpacing: "0.5px" }}>
           psql Terminal
         </span>
-        <div className="flex-1" />
         {activeConnection && (
-          <span className="text-[10px] px-2 py-0.5 rounded" style={{ background: "var(--muted)", color: "var(--muted-foreground)" }}>
-            {activeConnection.db_username}@{activeConnection.host}/{activeConnection.database_name}
-          </span>
+          <>
+            <div style={{ width: 1, height: 14, background: "var(--border)" }} />
+            <span style={{ fontSize: 10, color: "var(--muted-foreground)" }}>
+              {activeConnection.db_username}@{activeConnection.host}:{activeConnection.port}/
+              {activeConnection.database_name}
+            </span>
+          </>
         )}
       </div>
 
-      {/* Terminal body - placeholder for xterm.js in Phase 4 */}
-      <div style={{ flex: 1, padding: "12px", overflowY: "auto", minHeight: 0, fontFamily: "'Cascadia Code', 'Fira Code', monospace" }}>
+      {/* Terminal body */}
+      <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
         {!activeConnection ? (
-          <div className="text-xs" style={{ color: "var(--muted-foreground)" }}>
+          <div style={{ padding: "24px 16px", color: "var(--muted-foreground)", fontSize: 12 }}>
             Select a connection to start a psql session.
           </div>
         ) : (
-          <div className="text-xs space-y-1">
-            <div style={{ color: "var(--muted-foreground)" }}>
-              {`-- psql terminal will connect to ${activeConnection.db_username}@${activeConnection.host}:${activeConnection.port}/${activeConnection.database_name}`}
-            </div>
-            <div style={{ color: "var(--muted-foreground)" }}>
-              -- WebSocket terminal integration coming in Phase 4
-            </div>
-            <div className="flex items-center gap-1" style={{ color: "#22c55e" }}>
-              <span>{activeConnection.database_name}=#</span>
-              <span className="animate-pulse">▌</span>
-            </div>
-          </div>
+          <XtermTerminal
+            key={activeConnection.id}
+            wsUrl={`${WS_BASE}/terminal/ws?token=${token}&connection_profile_id=${activeConnection.id}`}
+          />
         )}
       </div>
     </div>

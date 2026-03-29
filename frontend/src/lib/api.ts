@@ -212,6 +212,28 @@ export function listSnapshots(connectionProfileId: number): Promise<Snapshot[]> 
   return request(`/snapshots?connection_profile_id=${connectionProfileId}`);
 }
 
+export function createSnapshot(connectionProfileId: number): Promise<Snapshot> {
+  return request(`/snapshots/manual?connection_profile_id=${connectionProfileId}`, {
+    method: "POST",
+  });
+}
+
+export function getSnapshotFrequency(connectionProfileId: number): Promise<number> {
+  return request<{ frequency: number }>(
+    `/snapshots/frequency?connection_profile_id=${connectionProfileId}`
+  ).then((r) => r.frequency);
+}
+
+export function setSnapshotFrequency(
+  connectionProfileId: number,
+  frequency: number
+): Promise<number> {
+  return request<{ frequency: number }>("/snapshots/frequency", {
+    method: "PUT",
+    body: { connection_profile_id: connectionProfileId, frequency },
+  }).then((r) => r.frequency);
+}
+
 // ---------- Anti-commands ----------
 
 export interface AntiCommand {
@@ -222,6 +244,10 @@ export interface AntiCommand {
 
 export function listAntiCommands(connectionProfileId: number): Promise<AntiCommand[]> {
   return request(`/anticommands?connection_profile_id=${connectionProfileId}`);
+}
+
+export function getAntiCommand(versionId: string): Promise<AntiCommand> {
+  return request(`/anticommands/${versionId}`);
 }
 
 export { ApiError };

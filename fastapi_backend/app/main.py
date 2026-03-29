@@ -22,6 +22,7 @@ from fastapi_backend.app.routes.commit_routes import router as commit_router
 from fastapi_backend.app.routes.anticommand_routes import router as anticommand_router
 from fastapi_backend.app.routes.snapshot_routes import router as snapshot_router
 from fastapi_backend.app.routes.rollback_routes import router as rollback_router
+from fastapi_backend.app.routes.terminal_routes import router as terminal_router
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +72,7 @@ app.include_router(commit_router)
 app.include_router(anticommand_router)
 app.include_router(snapshot_router)
 app.include_router(rollback_router)
+app.include_router(terminal_router)
 
 
 @app.get("/health")
