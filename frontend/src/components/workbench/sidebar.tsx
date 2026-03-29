@@ -77,28 +77,30 @@ const CATEGORY_TYPE: Record<CategoryName, TreeItem["type"]> = {
 };
 
 export function Sidebar() {
-  const { activeConnection, emit } = useWorkspace();
+  const { activeConnection, emit, updateSchemaMeta } = useWorkspace();
   const [schemas, setSchemas] = useState<SchemaNode[]>([]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [selectedItem, setSelectedItem] = useState<string | null>(null);
 
   const loadSchemas = useCallback(async () => {
-    if (!activeConnection) { setSchemas([]); return; }
+    if (!activeConnection) { setSchemas([]); updateSchemaMeta({ schemas: [], tables: {}, columns: {} }); return; }
     setLoading(true);
     try {
       const result = await executeSQL(activeConnection.id, QUERIES.schemas);
-      setSchemas(result.rows.map((row) => ({
-        name: String(row[0]),
-        categories: CATEGORY_NAMES.map((name) => ({ name, items: [], loaded: false })),
+      const schemaNames = result.rows.map((row) => String(row[0]));
+      setSchemas(schemaNames.map((name) => ({
+        name,
+        categories: CATEGORY_NAMES.map((n) => ({ name: n, items: [], loaded: false })),
       })));
       setExpanded(new Set());
+      updateSchemaMeta({ schemas: schemaNames, tables: {}, columns: {} });
     } catch {
       setSchemas([]);
     } finally {
       setLoading(false);
     }
-  }, [activeConnection]);
+  }, [activeConnection, updateSchemaMeta]);
 
   useEffect(() => { loadSchemas(); }, [loadSchemas]);
 
@@ -106,16 +108,21 @@ export function Sidebar() {
     if (!activeConnection) return;
     try {
       const result = await executeSQL(activeConnection.id, CATEGORY_QUERY[catName](schemaName));
+      const names = result.rows.map((row) => String(row[0]));
       setSchemas((prev) => prev.map((s) => {
         if (s.name !== schemaName) return s;
         return { ...s, categories: s.categories.map((c) => {
           if (c.name !== catName) return c;
-          return { ...c, loaded: true, items: result.rows.map((row) => ({
-            name: String(row[0]),
+          return { ...c, loaded: true, items: names.map((name) => ({
+            name,
             type: CATEGORY_TYPE[catName],
           })) };
         }) };
       }));
+      // Push table/view names to schema metadata for autocomplete
+      if (catName === "Tables" || catName === "Views") {
+        updateSchemaMeta({ tables: { [schemaName]: names } });
+      }
     } catch { /* ignore */ }
   };
 
@@ -138,6 +145,8 @@ export function Sidebar() {
           }),
         })) };
       }));
+      // Push column names to schema metadata for autocomplete
+      updateSchemaMeta({ columns: { [`${schemaName}.${tableName}`]: columns.map((c) => c.name) } });
     } catch { /* ignore */ }
   };
 

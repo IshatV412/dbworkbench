@@ -1,3 +1,31 @@
-*.yaml
-*.venv
+# Python
 __pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+dist/
+build/
+.venv/
+*.venv
+.env
+.env.*
+
+# Django
+db.sqlite3
+media/
+staticfiles/
+
+# Config
+*.yaml
+
+# Frontend
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+
+# IDE
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db

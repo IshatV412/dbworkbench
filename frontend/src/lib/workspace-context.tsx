@@ -6,12 +6,21 @@ import { listConnections } from "@/lib/api";
 
 type EventCallback = (data: unknown) => void;
 
+export interface SchemaMetadata {
+  schemas: string[];
+  tables: Record<string, string[]>;
+  columns: Record<string, string[]>;
+}
+
 interface WorkspaceState {
   connections: ConnectionProfile[];
   activeConnection: ConnectionProfile | null;
   setActiveConnection: (conn: ConnectionProfile | null) => void;
   refreshConnections: () => Promise<void>;
   isLoadingConnections: boolean;
+  /** Schema metadata for autocomplete */
+  schemaMeta: SchemaMetadata;
+  updateSchemaMeta: (meta: Partial<SchemaMetadata>) => void;
   /** Fire an event that other components can listen to */
   emit: (event: string, data?: unknown) => void;
   /** Subscribe to an event, returns unsubscribe fn */
@@ -24,6 +33,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const [connections, setConnections] = useState<ConnectionProfile[]>([]);
   const [activeConnection, setActiveConnection] = useState<ConnectionProfile | null>(null);
   const [isLoadingConnections, setIsLoadingConnections] = useState(false);
+  const [schemaMeta, setSchemaMeta] = useState<SchemaMetadata>({ schemas: [], tables: {}, columns: {} });
   const listenersRef = useRef<Map<string, Set<EventCallback>>>(new Map());
 
   const refreshConnections = useCallback(async () => {
@@ -45,6 +55,14 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     if (cbs) cbs.forEach((cb) => cb(data));
   }, []);
 
+  const updateSchemaMeta = useCallback((partial: Partial<SchemaMetadata>) => {
+    setSchemaMeta((prev) => ({
+      schemas: partial.schemas ?? prev.schemas,
+      tables: partial.tables ? { ...prev.tables, ...partial.tables } : prev.tables,
+      columns: partial.columns ? { ...prev.columns, ...partial.columns } : prev.columns,
+    }));
+  }, []);
+
   const on = useCallback((event: string, cb: EventCallback) => {
     if (!listenersRef.current.has(event)) {
       listenersRef.current.set(event, new Set());
@@ -60,6 +78,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       value={{
         connections, activeConnection, setActiveConnection,
         refreshConnections, isLoadingConnections,
+        schemaMeta, updateSchemaMeta,
         emit, on,
       }}
     >
