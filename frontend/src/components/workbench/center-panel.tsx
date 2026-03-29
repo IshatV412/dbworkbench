@@ -18,10 +18,10 @@ export function CenterPanel() {
   return (
     <Group orientation="vertical" style={{ height: "100%", display: "flex", flexDirection: "column" }}>
       {/* SQL Editor + Results */}
-      <Panel defaultSize={65} minSize={30}>
+      <Panel defaultSize="65%" minSize="30%">
         <Group orientation="vertical" style={{ height: "100%", display: "flex", flexDirection: "column" }}>
           {/* SQL Editor */}
-          <Panel defaultSize={45} minSize={20}>
+          <Panel defaultSize="45%" minSize="20%">
             <div style={{ height: "100%", overflow: "hidden" }}>
               <SqlEditor />
             </div>
@@ -30,7 +30,7 @@ export function CenterPanel() {
           <Separator style={hSepStyle} />
 
           {/* Results Grid */}
-          <Panel defaultSize={55} minSize={15}>
+          <Panel defaultSize="55%" minSize="15%">
             <div style={{ height: "100%", overflow: "hidden" }}>
               <ResultsGrid />
             </div>
@@ -41,7 +41,7 @@ export function CenterPanel() {
       <Separator style={hSepStyle} />
 
       {/* Terminal */}
-      <Panel defaultSize={35} minSize={8}>
+      <Panel defaultSize="35%" minSize="8%">
         <div style={{ height: "100%", overflow: "hidden" }}>
           <TerminalPanel />
         </div>

@@ -24,7 +24,7 @@ export function ResizableLayout({ sidebar, center, rightPanel }: ResizableLayout
       style={{ flex: 1, minHeight: 0, height: "100%", display: "flex", overflow: "hidden" }}
     >
       {/* Left Sidebar */}
-      <Panel defaultSize={18} minSize={12} maxSize={35}>
+      <Panel defaultSize="18%" minSize="12%" maxSize="35%">
         <div style={{ height: "100%", borderRight: "1px solid var(--border)", overflow: "hidden" }}>
           {sidebar}
         </div>
@@ -33,7 +33,7 @@ export function ResizableLayout({ sidebar, center, rightPanel }: ResizableLayout
       <Separator style={vSepStyle} />
 
       {/* Center - Editor + Results + Terminal */}
-      <Panel defaultSize={58} minSize={30}>
+      <Panel defaultSize="58%" minSize="30%">
         <div style={{ height: "100%", overflow: "hidden" }}>
           {center}
         </div>
@@ -42,7 +42,7 @@ export function ResizableLayout({ sidebar, center, rightPanel }: ResizableLayout
       <Separator style={vSepStyle} />
 
       {/* Right - Version Control Panel */}
-      <Panel defaultSize={24} minSize={15} maxSize={38}>
+      <Panel defaultSize="24%" minSize="15%" maxSize="38%">
         <div style={{ height: "100%", borderLeft: "1px solid var(--border)", overflow: "hidden" }}>
           {rightPanel}
         </div>
