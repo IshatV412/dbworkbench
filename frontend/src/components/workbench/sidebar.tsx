@@ -183,20 +183,27 @@ export function Sidebar() {
   };
 
   return (
-    <div className="h-full flex flex-col overflow-hidden" style={{ background: "var(--sidebar-bg)" }}>
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", background: "var(--sidebar-bg)" }}>
       {/* Header */}
       <div
-        className="flex items-center justify-between px-3 py-2 shrink-0"
-        style={{ background: "var(--sidebar-header)", borderBottom: "1px solid var(--border)" }}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "0 10px",
+          height: 32,
+          background: "var(--sidebar-header)",
+          borderBottom: "1px solid var(--border)",
+          flexShrink: 0,
+        }}
       >
-        <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--muted-foreground)" }}>
+        <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.8px", textTransform: "uppercase", color: "var(--muted-foreground)" }}>
           Object Explorer
         </span>
         {activeConnection && (
           <button
             onClick={loadSchemas}
-            className="text-[10px] px-1.5 py-0.5 rounded hover:opacity-80"
-            style={{ background: "var(--muted)", color: "var(--muted-foreground)" }}
+            style={{ fontSize: 14, background: "transparent", border: "none", color: "var(--muted-foreground)", cursor: "pointer", padding: "2px 4px" }}
             title="Refresh"
           >
             ↻
@@ -220,7 +227,7 @@ export function Sidebar() {
       )}
 
       {/* Tree */}
-      <div className="flex-1 overflow-y-auto py-1 text-xs">
+      <div style={{ flex: 1, overflowY: "auto", padding: "4px 0", fontSize: 12 }}>
         {!activeConnection && (
           <div className="px-3 py-8 text-center" style={{ color: "var(--muted-foreground)" }}>
             Select a connection to browse

@@ -1,37 +1,40 @@
 @import "tailwindcss";
 
 :root {
-  --background: #0a0a0a;
-  --foreground: #ededed;
-  --card: #141414;
-  --card-foreground: #ededed;
-  --popover: #141414;
-  --popover-foreground: #ededed;
-  --primary: #3b82f6;
+  --background: #0f1117;
+  --foreground: #e2e8f0;
+  --card: #161b27;
+  --card-foreground: #e2e8f0;
+  --popover: #1e2433;
+  --popover-foreground: #e2e8f0;
+  --primary: #4e9cf5;
   --primary-foreground: #ffffff;
-  --secondary: #1e293b;
-  --secondary-foreground: #ededed;
-  --muted: #1e1e1e;
-  --muted-foreground: #a1a1aa;
-  --accent: #1e293b;
-  --accent-foreground: #ededed;
-  --destructive: #ef4444;
+  --secondary: #252d3d;
+  --secondary-foreground: #e2e8f0;
+  --muted: #252d3d;
+  --muted-foreground: #8b9db5;
+  --accent: #2a3450;
+  --accent-foreground: #e2e8f0;
+  --destructive: #f87171;
   --destructive-foreground: #ffffff;
-  --border: #2e2e2e;
-  --input: #2e2e2e;
-  --ring: #3b82f6;
-  --sidebar-bg: #111318;
-  --sidebar-header: #1a1d24;
-  --sidebar-hover: #1e2229;
-  --sidebar-active: #252930;
-  --toolbar-bg: #1a1d24;
-  --panel-bg: #111318;
-  --editor-bg: #1e1e1e;
-  --grid-header: #1a1d24;
-  --grid-row-alt: #141418;
-  --grid-border: #2e2e2e;
-  --terminal-bg: #0c0c0c;
-  --status-bar: #007acc;
+  --border: #2e3a50;
+  --input: #252d3d;
+  --ring: #4e9cf5;
+  --sidebar-bg: #131a27;
+  --sidebar-header: #0f1520;
+  --sidebar-hover: #1a2336;
+  --sidebar-active: #1e2d44;
+  --toolbar-bg: #0f1520;
+  --toolbar-border: #1e2d44;
+  --panel-bg: #131a27;
+  --editor-bg: #1a1f2e;
+  --grid-header: #0f1520;
+  --grid-row-alt: #161c2a;
+  --grid-border: #253045;
+  --terminal-bg: #0a0d14;
+  --status-bar: #1565C0;
+  --resize-handle: #2e3a50;
+  --resize-handle-active: #4e9cf5;
 }
 
 * {
@@ -63,24 +66,23 @@ html, body {
   background: #555;
 }
 
-/* react-resizable-panels handle */
-[data-group-orientation="horizontal"] > [data-separator] {
-  width: 3px;
-  background: var(--border);
+/* react-resizable-panels v4 — uses data-group / data-separator attributes */
+[data-separator] {
+  background: var(--resize-handle);
   transition: background 0.15s;
-  cursor: col-resize;
+  position: relative;
+  z-index: 1;
 }
-[data-group-orientation="horizontal"] > [data-separator]:hover,
-[data-group-orientation="horizontal"] > [data-separator][data-active] {
-  background: var(--primary);
+[data-separator]:hover,
+[data-separator="drag"] {
+  background: var(--resize-handle-active);
 }
-[data-group-orientation="vertical"] > [data-separator] {
-  height: 3px;
-  background: var(--border);
-  transition: background 0.15s;
-  cursor: row-resize;
+
+/* Panel group fills its container */
+[data-group] {
+  height: 100%;
+  overflow: hidden;
 }
-[data-group-orientation="vertical"] > [data-separator]:hover,
-[data-group-orientation="vertical"] > [data-separator][data-active] {
-  background: var(--primary);
+[data-panel] {
+  overflow: hidden;
 }

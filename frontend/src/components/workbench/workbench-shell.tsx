@@ -21,13 +21,15 @@ export function WorkbenchShell() {
   }, [isAuthenticated, refreshConnections]);
 
   return (
-    <div className="h-screen flex flex-col overflow-hidden" style={{ background: "var(--background)" }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden", background: "var(--background)" }}>
       <Toolbar />
-      <ResizableLayout
-        sidebar={<Sidebar />}
-        center={<CenterPanel />}
-        rightPanel={<VersionPanel />}
-      />
+      <div style={{ flex: 1, minHeight: 0, display: "flex", overflow: "hidden" }}>
+        <ResizableLayout
+          sidebar={<Sidebar />}
+          center={<CenterPanel />}
+          rightPanel={<VersionPanel />}
+        />
+      </div>
       <StatusBar />
     </div>
   );

@@ -58,21 +58,25 @@ export function VersionPanel() {
   };
 
   return (
-    <div className="h-full flex flex-col" style={{ background: "var(--panel-bg)" }}>
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", background: "var(--panel-bg)" }}>
       {/* Header */}
       <div
-        className="px-3 py-2 text-xs font-semibold uppercase tracking-wider shrink-0 flex items-center justify-between"
         style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "0 10px",
+          height: 32,
+          flexShrink: 0,
           color: "var(--muted-foreground)",
           background: "var(--sidebar-header)",
           borderBottom: "1px solid var(--border)",
         }}
       >
-        <span>Version Control</span>
+        <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.8px", textTransform: "uppercase" }}>Version Control</span>
         <button
           onClick={refresh}
-          className="text-[10px] px-1.5 py-0.5 rounded hover:opacity-80"
-          style={{ background: "var(--muted)", color: "var(--muted-foreground)" }}
+          style={{ fontSize: 14, background: "transparent", border: "none", color: "var(--muted-foreground)", cursor: "pointer", padding: "2px 4px" }}
           title="Refresh"
         >
           ↻
@@ -80,7 +84,7 @@ export function VersionPanel() {
       </div>
 
       {/* Tabs */}
-      <div className="flex shrink-0" style={{ borderBottom: "1px solid var(--border)" }}>
+      <div style={{ display: "flex", flexShrink: 0, borderBottom: "1px solid var(--border)" }}>
         {(["commits", "snapshots"] as const).map((t) => (
           <button
             key={t}
@@ -97,7 +101,7 @@ export function VersionPanel() {
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto">
+      <div style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
         {!activeConnection && (
           <div className="px-3 py-8 text-center text-xs" style={{ color: "var(--muted-foreground)" }}>
             Select a connection to view history

@@ -6,7 +6,7 @@ export function TerminalPanel() {
   const { activeConnection } = useWorkspace();
 
   return (
-    <div className="h-full flex flex-col" style={{ background: "var(--terminal-bg)" }}>
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "var(--terminal-bg)", overflow: "hidden" }}>
       {/* Header */}
       <div
         className="flex items-center gap-2 px-3 py-1 shrink-0"
@@ -24,7 +24,7 @@ export function TerminalPanel() {
       </div>
 
       {/* Terminal body - placeholder for xterm.js in Phase 4 */}
-      <div className="flex-1 p-3 overflow-auto" style={{ fontFamily: "'Cascadia Code', 'Fira Code', monospace" }}>
+      <div style={{ flex: 1, padding: "12px", overflowY: "auto", minHeight: 0, fontFamily: "'Cascadia Code', 'Fira Code', monospace" }}>
         {!activeConnection ? (
           <div className="text-xs" style={{ color: "var(--muted-foreground)" }}>
             Select a connection to start a psql session.
