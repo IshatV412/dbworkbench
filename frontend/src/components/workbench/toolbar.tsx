@@ -4,11 +4,16 @@ import { useAuth } from "@/lib/auth-context";
 import { useWorkspace } from "@/lib/workspace-context";
 import { ConnectionModal } from "@/components/workbench/connection-modal";
 import { useState } from "react";
+import type { ConnectionProfile } from "@/lib/api";
 
 export function Toolbar() {
   const { username, logout } = useAuth();
   const { activeConnection, connections, setActiveConnection } = useWorkspace();
   const [showConnModal, setShowConnModal] = useState(false);
+  const [editConn, setEditConn] = useState<ConnectionProfile | null>(null);
+
+  const openNew = () => { setEditConn(null); setShowConnModal(true); };
+  const openEdit = () => { if (activeConnection) { setEditConn(activeConnection); setShowConnModal(true); } };
 
   return (
     <>
@@ -56,13 +61,24 @@ export function Toolbar() {
           </select>
 
           <button
-            onClick={() => setShowConnModal(true)}
+            onClick={openNew}
             className="rounded px-2 py-1 text-xs font-medium transition-colors hover:opacity-80"
             style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}
             title="New Connection"
           >
-            + Connection
+            + New
           </button>
+
+          {activeConnection && (
+            <button
+              onClick={openEdit}
+              className="rounded px-2 py-1 text-xs transition-colors hover:opacity-80"
+              style={{ background: "var(--secondary)", color: "var(--secondary-foreground)" }}
+              title="Edit active connection"
+            >
+              ✎ Edit
+            </button>
+          )}
         </div>
 
         {/* Right: User */}
@@ -80,7 +96,12 @@ export function Toolbar() {
         </div>
       </div>
 
-      {showConnModal && <ConnectionModal onClose={() => setShowConnModal(false)} />}
+      {showConnModal && (
+        <ConnectionModal
+          onClose={() => setShowConnModal(false)}
+          editConnection={editConn}
+        />
+      )}
     </>
   );
 }

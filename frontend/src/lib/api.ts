@@ -129,8 +129,19 @@ export function createConnection(data: CreateConnectionRequest): Promise<Connect
   return request("/connections", { method: "POST", body: data });
 }
 
+export function updateConnection(id: number, data: Partial<CreateConnectionRequest>): Promise<ConnectionProfile> {
+  return request(`/connections/${id}`, { method: "PUT", body: data });
+}
+
 export function deleteConnection(id: number): Promise<void> {
   return request(`/connections/${id}`, { method: "DELETE" });
+}
+
+export function testConnection(connectionProfileId: number): Promise<QueryResult> {
+  return request("/query/execute", {
+    method: "POST",
+    body: { connection_profile_id: connectionProfileId, sql: "SELECT 1 AS connected" },
+  });
 }
 
 // ---------- Query ----------

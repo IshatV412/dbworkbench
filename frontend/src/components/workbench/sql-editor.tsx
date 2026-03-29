@@ -1,23 +1,22 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { useWorkspace } from "@/lib/workspace-context";
 import { executeSQL, type QueryResult } from "@/lib/api";
 
-// We'll store results in a simple event emitter pattern so ResultsGrid can pick them up
-// For Phase 1, we use a simple callback approach via context or window event
-
 export function SqlEditor() {
-  const { activeConnection } = useWorkspace();
+  const { activeConnection, on } = useWorkspace();
   const [sql, setSql] = useState("SELECT 1;");
   const [running, setRunning] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const runRef = useRef<(overrideSql?: string) => void>(null);
 
-  const handleRun = useCallback(async () => {
-    if (!activeConnection || !sql.trim()) return;
+  const handleRun = useCallback(async (overrideSql?: string) => {
+    const query = overrideSql ?? sql;
+    if (!activeConnection || !query.trim()) return;
     setRunning(true);
     try {
-      const result = await executeSQL(activeConnection.id, sql);
+      const result = await executeSQL(activeConnection.id, query);
       // Dispatch custom event so ResultsGrid picks it up
       window.dispatchEvent(new CustomEvent<QueryResult>("query-result", { detail: result }));
     } catch (err: unknown) {
@@ -31,6 +30,19 @@ export function SqlEditor() {
       setRunning(false);
     }
   }, [activeConnection, sql]);
+
+  // Keep a stable ref to handleRun so the event listener always calls the latest version
+  runRef.current = handleRun;
+
+  // Listen for "run-query" events from Object Explorer (sidebar click)
+  useEffect(() => {
+    const unsub = on("run-query", (data: unknown) => {
+      const query = data as string;
+      setSql(query);
+      runRef.current?.(query);
+    });
+    return unsub;
+  }, [on]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     // Ctrl+Enter or F5 to run
@@ -66,7 +78,7 @@ export function SqlEditor() {
         </span>
         <div className="flex-1" />
         <button
-          onClick={handleRun}
+          onClick={() => handleRun()}
           disabled={running || !activeConnection}
           className="flex items-center gap-1 rounded px-3 py-1 text-xs font-medium transition-colors disabled:opacity-40"
           style={{ background: "#22c55e", color: "#000" }}
