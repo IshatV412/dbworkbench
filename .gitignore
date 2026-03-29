@@ -38,5 +38,11 @@ db.sqlite3
 # Snapshot temp files
 *.sql.tmp
 
+# Pytest
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
+
 # Claude Code
 .claude/
