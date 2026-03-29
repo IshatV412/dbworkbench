@@ -1,0 +1,86 @@
+@import "tailwindcss";
+
+:root {
+  --background: #0a0a0a;
+  --foreground: #ededed;
+  --card: #141414;
+  --card-foreground: #ededed;
+  --popover: #141414;
+  --popover-foreground: #ededed;
+  --primary: #3b82f6;
+  --primary-foreground: #ffffff;
+  --secondary: #1e293b;
+  --secondary-foreground: #ededed;
+  --muted: #1e1e1e;
+  --muted-foreground: #a1a1aa;
+  --accent: #1e293b;
+  --accent-foreground: #ededed;
+  --destructive: #ef4444;
+  --destructive-foreground: #ffffff;
+  --border: #2e2e2e;
+  --input: #2e2e2e;
+  --ring: #3b82f6;
+  --sidebar-bg: #111318;
+  --sidebar-header: #1a1d24;
+  --sidebar-hover: #1e2229;
+  --sidebar-active: #252930;
+  --toolbar-bg: #1a1d24;
+  --panel-bg: #111318;
+  --editor-bg: #1e1e1e;
+  --grid-header: #1a1d24;
+  --grid-row-alt: #141418;
+  --grid-border: #2e2e2e;
+  --terminal-bg: #0c0c0c;
+  --status-bar: #007acc;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--background);
+  color: var(--foreground);
+}
+
+/* Scrollbar styling for dark theme */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: var(--background);
+}
+::-webkit-scrollbar-thumb {
+  background: #3a3a3a;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
+/* react-resizable-panels handle */
+[data-group-orientation="horizontal"] > [data-separator] {
+  width: 3px;
+  background: var(--border);
+  transition: background 0.15s;
+  cursor: col-resize;
+}
+[data-group-orientation="horizontal"] > [data-separator]:hover,
+[data-group-orientation="horizontal"] > [data-separator][data-active] {
+  background: var(--primary);
+}
+[data-group-orientation="vertical"] > [data-separator] {
+  height: 3px;
+  background: var(--border);
+  transition: background 0.15s;
+  cursor: row-resize;
+}
+[data-group-orientation="vertical"] > [data-separator]:hover,
+[data-group-orientation="vertical"] > [data-separator][data-active] {
+  background: var(--primary);
+}
