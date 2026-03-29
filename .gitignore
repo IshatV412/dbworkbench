@@ -1,6 +1,8 @@
 # Python
 __pycache__/
 *.py[cod]
+*.pyo
+*.pyd
 *.egg-info/
 *.egg
 dist/
@@ -10,22 +12,39 @@ build/
 .env
 .env.*
 
+# Python tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+coverage/
+htmlcov/
+.coverage
+.coverage.*
+
 # Django
 db.sqlite3
 media/
 staticfiles/
 
-# Config
-*.yaml
+# Logs
+*.log
+logs/
 
 # Frontend
 frontend/node_modules/
 frontend/.next/
 frontend/out/
+frontend/.env.local
 
-# IDE
+# IDE / Editor
+.vscode/
 .idea/
 *.swp
 *.swo
+*.sublime-project
+*.sublime-workspace
+
+# OS
 .DS_Store
 Thumbs.db
+desktop.ini
