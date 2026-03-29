@@ -1,24 +1,31 @@
 """Rollback service — restore user's database to a previous version.
 
-Algorithm (from context.md):
-1. Find the nearest Snapshot before the target version
-2. Restore that snapshot on the user's external DB
-3. Replay InverseOperations between the snapshot and the target
-   version in reverse chronological order
-4. If any inverse operation fails, rollback impact is limited to
-   the interval between two adjacent snapshots
-5. Delete stale CommitEvent records for all commits after the target
-   so the commit history stays clean (InverseOperations cascade-delete)
+Algorithm (optimised snapshot-distance strategy):
+1. Find the nearest snapshot BEFORE (S1) and AFTER (S2) the target version.
+2. Compute the target's position within the snapshot interval.
+3. If both S1 and S2 exist:
+   - position <= ceil(k/2): restore S1, replay sql_commands forward.
+   - position > ceil(k/2): restore S2, apply inverse_sql backward.
+4. If only S1 exists: restore S1, replay forward.
+5. If only S2 exists: restore S2, apply inverse backward.
+6. If no snapshots: fall back to applying inverse operations from the
+   current DB state (legacy behaviour).
+7. Delete stale CommitEvent records after the target.
 """
 
 from __future__ import annotations
+
+import math
 
 from authentication.models import User
 from connections.models import ConnectionProfile
 from core.models import CommitEvent, InverseOperation, Snapshot
 
 from fastapi_backend.app.db.connection import get_user_connection
-from fastapi_backend.app.services.snapshot_service import restore_snapshot_data
+from fastapi_backend.app.services.snapshot_service import (
+    get_snapshot_frequency,
+    restore_snapshot_data,
+)
 
 
 def rollback_to_version(
@@ -40,43 +47,103 @@ def rollback_to_version(
     except CommitEvent.DoesNotExist:
         raise ValueError(f"Commit {target_version_id} not found")
 
-    # 2. Find nearest snapshot at or before the target commit
-    snapshot = Snapshot.objects.filter(
+    # 2. Find surrounding snapshots
+    prev_snapshot = Snapshot.objects.filter(
         connection_profile=profile,
         created_at__lte=target_commit.timestamp,
     ).order_by("-created_at").first()
 
-    snapshot_info = None
-
-    # 3. Restore snapshot on the user's external database
-    if snapshot:
-        restore_snapshot_data(snapshot.s3_key, profile)
-        snapshot_info = snapshot.s3_key
-
-    # 4. Get all commits AFTER the target, in reverse chronological order
-    commits_after = CommitEvent.objects.filter(
+    next_snapshot = Snapshot.objects.filter(
         connection_profile=profile,
-        user=user,
-        timestamp__gt=target_commit.timestamp,
-    ).order_by("-timestamp")
+        created_at__gt=target_commit.timestamp,
+    ).order_by("created_at").first()
 
-    # Capture IDs before iteration so we can delete them after
-    stale_ids = list(commits_after.values_list("id", flat=True))
+    # Look up the commit seq associated with each snapshot
+    prev_snap_seq = None
+    if prev_snapshot:
+        try:
+            prev_snap_commit = CommitEvent.objects.get(
+                version_id=prev_snapshot.version_id,
+                connection_profile=profile,
+            )
+            prev_snap_seq = prev_snap_commit.seq
+        except CommitEvent.DoesNotExist:
+            prev_snapshot = None
 
-    # 5. Apply inverse operations on the user's external database
-    conn = get_user_connection(profile)
+    next_snap_seq = None
+    if next_snapshot:
+        try:
+            next_snap_commit = CommitEvent.objects.get(
+                version_id=next_snapshot.version_id,
+                connection_profile=profile,
+            )
+            next_snap_seq = next_snap_commit.seq
+        except CommitEvent.DoesNotExist:
+            next_snapshot = None
+
+    # 3. Decide restoration strategy
+    frequency = get_snapshot_frequency(profile.id)
+    threshold = math.ceil(frequency / 2)  # give more to forward on odd k
+
+    if prev_snapshot:
+        position = target_commit.seq - prev_snap_seq
+    else:
+        position = target_commit.seq  # distance from beginning
+
+    # 4. Execute restoration
+    snapshot_info = None
     applied = 0
+    strategy = "forward"
+
+    conn = get_user_connection(profile)
     try:
         cur = conn.cursor()
-        for commit in commits_after:
-            try:
-                inverse = commit.inverse_operation
-                cur.execute(inverse.inverse_sql)
-                applied += 1
-            except InverseOperation.DoesNotExist:
-                # Should never happen per the atomic write guarantee,
-                # but limit blast radius per REQ-11
-                continue
+
+        if prev_snapshot and next_snapshot:
+            # Both snapshots available — pick optimal direction
+            if position <= threshold:
+                snapshot_info = _restore_forward(
+                    cur, prev_snapshot, prev_snap_seq, target_commit, profile,
+                )
+                applied = _count_forward(prev_snap_seq, target_commit, profile)
+            else:
+                strategy = "backward"
+                snapshot_info = _restore_backward(
+                    cur, next_snapshot, next_snap_seq, target_commit, profile,
+                )
+                applied = _count_backward(target_commit, next_snap_seq, profile)
+
+        elif prev_snapshot:
+            # Only S1 — forward replay
+            snapshot_info = _restore_forward(
+                cur, prev_snapshot, prev_snap_seq, target_commit, profile,
+            )
+            applied = _count_forward(prev_snap_seq, target_commit, profile)
+
+        elif next_snapshot:
+            # Only S2 — backward replay
+            strategy = "backward"
+            snapshot_info = _restore_backward(
+                cur, next_snapshot, next_snap_seq, target_commit, profile,
+            )
+            applied = _count_backward(target_commit, next_snap_seq, profile)
+
+        else:
+            # No snapshots — fall back to inverse operations from current state
+            strategy = "backward"
+            commits_after = CommitEvent.objects.filter(
+                connection_profile=profile,
+                seq__gt=target_commit.seq,
+            ).order_by("-seq")
+
+            for commit in commits_after:
+                try:
+                    inverse = commit.inverse_operation
+                    cur.execute(inverse.inverse_sql)
+                    applied += 1
+                except InverseOperation.DoesNotExist:
+                    continue
+
         conn.commit()
     except Exception:
         conn.rollback()
@@ -84,13 +151,72 @@ def rollback_to_version(
     finally:
         conn.close()
 
-    # 6. Delete stale commit records so history stays clean
+    # 5. Delete stale commit records after the target
     #    InverseOperations cascade-delete automatically
-    CommitEvent.objects.filter(id__in=stale_ids).delete()
+    CommitEvent.objects.filter(
+        connection_profile=profile,
+        user=user,
+        seq__gt=target_commit.seq,
+    ).delete()
 
     return {
         "rolled_back_to": target_version_id,
         "snapshot_restored": snapshot_info,
-        "anti_commands_applied": applied,
+        "commands_applied": applied,
+        "strategy": strategy,
         "status": "success",
     }
+
+
+# -- Internal helpers ----------------------------------------------------------
+
+def _restore_forward(cur, snapshot, snap_seq, target_commit, profile):
+    """Restore a snapshot and replay sql_commands forward to the target."""
+    restore_snapshot_data(snapshot.s3_key, profile)
+
+    commits_forward = CommitEvent.objects.filter(
+        connection_profile=profile,
+        seq__gt=snap_seq,
+        seq__lte=target_commit.seq,
+    ).order_by("seq")
+
+    for commit in commits_forward:
+        cur.execute(commit.sql_command)
+
+    return snapshot.s3_key
+
+
+def _restore_backward(cur, snapshot, snap_seq, target_commit, profile):
+    """Restore a snapshot and apply inverse_sql backward to the target."""
+    restore_snapshot_data(snapshot.s3_key, profile)
+
+    commits_backward = CommitEvent.objects.filter(
+        connection_profile=profile,
+        seq__gt=target_commit.seq,
+        seq__lte=snap_seq,
+    ).order_by("-seq")
+
+    for commit in commits_backward:
+        try:
+            inverse = commit.inverse_operation
+            cur.execute(inverse.inverse_sql)
+        except InverseOperation.DoesNotExist:
+            continue
+
+    return snapshot.s3_key
+
+
+def _count_forward(snap_seq, target_commit, profile):
+    return CommitEvent.objects.filter(
+        connection_profile=profile,
+        seq__gt=snap_seq,
+        seq__lte=target_commit.seq,
+    ).count()
+
+
+def _count_backward(target_commit, snap_seq, profile):
+    return CommitEvent.objects.filter(
+        connection_profile=profile,
+        seq__gt=target_commit.seq,
+        seq__lte=snap_seq,
+    ).count()

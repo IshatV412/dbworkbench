@@ -1,6 +1,7 @@
 """Tests for rollback service — database version rollback.
 
 Covers: TC_16, TC_17, TC_18, TC_45, TC_47, TC_48, TC_49, TC_64, TC_65, TC_66
+Plus new tests for forward/backward snapshot-distance strategy.
 """
 
 import uuid
@@ -62,10 +63,10 @@ class TestRollbackInverseOperations:
     """Tests for inverse operation application during rollback."""
 
     def test_inverse_operations_applied_in_reverse_order(self, user, connection_profile, mock_psycopg2_connect, mock_s3, mock_subprocess):
-        """TC_17 — Verify that inverse operations are applied in correct reverse chronological order."""
+        """TC_17 — Verify that inverse operations are applied in correct reverse chronological order (no-snapshot fallback)."""
         vids = _create_commits(user, connection_profile, 5)
 
-        # Roll back to commit 2 — should apply inverses for commits 5, 4, 3
+        # Roll back to commit 2 — no snapshots, so fallback applies inverses for commits 5, 4, 3
         target_vid = vids[1]  # 2nd commit
 
         result = rollback_to_version(
@@ -73,7 +74,7 @@ class TestRollbackInverseOperations:
             connection_profile_id=connection_profile.id,
             target_version_id=target_vid,
         )
-        assert result["anti_commands_applied"] == 3
+        assert result["commands_applied"] == 3
         assert result["status"] == "success"
 
         # Verify the mock cursor received inverse SQL calls
@@ -140,6 +141,158 @@ class TestRollbackFailureSafety:
             )
 
 
+class TestRollbackStrategySelection:
+    """Tests for the forward/backward snapshot-distance strategy."""
+
+    def test_forward_strategy_first_half(self, user, connection_profile, mock_psycopg2_connect, mock_s3, mock_subprocess):
+        """Target in first half of interval uses forward replay from S1."""
+        SnapshotPolicy.objects.create(frequency=6, connection_profile=connection_profile)
+        vids = _create_commits(user, connection_profile, 12)
+        # Snapshots at commits 6 and 12. Interval between them: commits 7-12.
+        # Target commit 8 (seq=8): position = 8 - 6 = 2, threshold = ceil(6/2) = 3.
+        # position(2) <= threshold(3) → forward from S1 (commit 6).
+
+        result = rollback_to_version(
+            user_id=user.id,
+            connection_profile_id=connection_profile.id,
+            target_version_id=vids[7],  # commit 8
+        )
+        assert result["strategy"] == "forward"
+        assert result["commands_applied"] == 2  # replay commits 7, 8
+        assert result["snapshot_restored"] is not None
+
+        mock_cursor = mock_psycopg2_connect._mock_cursor
+        executed_sqls = [c[0][0] for c in mock_cursor.execute.call_args_list]
+        assert executed_sqls == [
+            "INSERT INTO t(id) VALUES (7)",
+            "INSERT INTO t(id) VALUES (8)",
+        ]
+
+    def test_backward_strategy_second_half(self, user, connection_profile, mock_psycopg2_connect, mock_s3, mock_subprocess):
+        """Target in second half of interval uses backward replay from S2."""
+        SnapshotPolicy.objects.create(frequency=6, connection_profile=connection_profile)
+        vids = _create_commits(user, connection_profile, 12)
+        # Snapshots at commits 6 and 12.
+        # Target commit 10 (seq=10): position = 10 - 6 = 4, threshold = ceil(6/2) = 3.
+        # position(4) > threshold(3) → backward from S2 (commit 12).
+
+        result = rollback_to_version(
+            user_id=user.id,
+            connection_profile_id=connection_profile.id,
+            target_version_id=vids[9],  # commit 10
+        )
+        assert result["strategy"] == "backward"
+        assert result["commands_applied"] == 2  # undo commits 12, 11
+        assert result["snapshot_restored"] is not None
+
+        mock_cursor = mock_psycopg2_connect._mock_cursor
+        executed_sqls = [c[0][0] for c in mock_cursor.execute.call_args_list]
+        assert executed_sqls == [
+            "DELETE FROM t WHERE id = 12",
+            "DELETE FROM t WHERE id = 11",
+        ]
+
+    def test_forward_at_threshold_boundary(self, user, connection_profile, mock_psycopg2_connect, mock_s3, mock_subprocess):
+        """Target at exactly ceil(k/2) uses forward strategy."""
+        SnapshotPolicy.objects.create(frequency=6, connection_profile=connection_profile)
+        vids = _create_commits(user, connection_profile, 12)
+        # Target commit 9 (seq=9): position = 9 - 6 = 3, threshold = ceil(6/2) = 3.
+        # position(3) <= threshold(3) → forward.
+
+        result = rollback_to_version(
+            user_id=user.id,
+            connection_profile_id=connection_profile.id,
+            target_version_id=vids[8],  # commit 9
+        )
+        assert result["strategy"] == "forward"
+        assert result["commands_applied"] == 3  # replay commits 7, 8, 9
+
+    def test_odd_frequency_gives_more_to_forward(self, user, connection_profile, mock_psycopg2_connect, mock_s3, mock_subprocess):
+        """With odd k (e.g., 5), ceil(5/2)=3 so 3 positions use forward, 2 use backward."""
+        SnapshotPolicy.objects.create(frequency=5, connection_profile=connection_profile)
+        vids = _create_commits(user, connection_profile, 10)
+        # Snapshots at commits 5 and 10.
+
+        # Position 3 (commit 8, seq=8): 8-5=3, threshold=ceil(5/2)=3 → forward
+        result = rollback_to_version(
+            user_id=user.id,
+            connection_profile_id=connection_profile.id,
+            target_version_id=vids[7],  # commit 8
+        )
+        assert result["strategy"] == "forward"
+
+    def test_odd_frequency_backward_kicks_in(self, user, connection_profile, mock_psycopg2_connect, mock_s3, mock_subprocess):
+        """With odd k=5, position 4 (>3) uses backward."""
+        SnapshotPolicy.objects.create(frequency=5, connection_profile=connection_profile)
+        vids = _create_commits(user, connection_profile, 10)
+        # Snapshots at commits 5 and 10.
+
+        # Position 4 (commit 9, seq=9): 9-5=4, threshold=3 → backward
+        result = rollback_to_version(
+            user_id=user.id,
+            connection_profile_id=connection_profile.id,
+            target_version_id=vids[8],  # commit 9
+        )
+        assert result["strategy"] == "backward"
+
+    def test_no_next_snapshot_falls_back_to_forward(self, user, connection_profile, mock_psycopg2_connect, mock_s3, mock_subprocess):
+        """When no S2 exists (target is beyond last snapshot), use forward from S1."""
+        SnapshotPolicy.objects.create(frequency=6, connection_profile=connection_profile)
+        vids = _create_commits(user, connection_profile, 10)
+        # Only one snapshot at commit 6. Target commit 10 has position=4, threshold=3.
+        # Normally would go backward, but no S2 → forward from S1.
+
+        result = rollback_to_version(
+            user_id=user.id,
+            connection_profile_id=connection_profile.id,
+            target_version_id=vids[9],  # commit 10
+        )
+        assert result["strategy"] == "forward"
+        assert result["commands_applied"] == 4  # replay commits 7, 8, 9, 10
+
+    def test_no_prev_snapshot_uses_next_backward(self, user, connection_profile, mock_psycopg2_connect, mock_s3, mock_subprocess):
+        """When no S1 exists (target is before first snapshot), use backward from S2."""
+        SnapshotPolicy.objects.create(frequency=3, connection_profile=connection_profile)
+        vids = _create_commits(user, connection_profile, 6)
+        # Snapshots at commits 3 and 6. Target commit 2 has no prev snapshot.
+
+        result = rollback_to_version(
+            user_id=user.id,
+            connection_profile_id=connection_profile.id,
+            target_version_id=vids[1],  # commit 2
+        )
+        assert result["strategy"] == "backward"
+        assert result["commands_applied"] == 1  # undo commit 3
+
+    def test_target_at_snapshot_commit(self, user, connection_profile, mock_psycopg2_connect, mock_s3, mock_subprocess):
+        """Rolling back to a commit that IS a snapshot should restore it with 0 replays."""
+        SnapshotPolicy.objects.create(frequency=3, connection_profile=connection_profile)
+        vids = _create_commits(user, connection_profile, 6)
+        # Snapshots at commits 3 and 6. Target = commit 3 (which is a snapshot).
+
+        result = rollback_to_version(
+            user_id=user.id,
+            connection_profile_id=connection_profile.id,
+            target_version_id=vids[2],  # commit 3
+        )
+        assert result["status"] == "success"
+        assert result["snapshot_restored"] is not None
+        assert result["commands_applied"] == 0
+
+    def test_no_snapshots_fallback(self, user, connection_profile, mock_psycopg2_connect, mock_s3, mock_subprocess):
+        """No snapshots at all — fall back to applying inverses from current state."""
+        vids = _create_commits(user, connection_profile, 4)
+
+        result = rollback_to_version(
+            user_id=user.id,
+            connection_profile_id=connection_profile.id,
+            target_version_id=vids[1],  # commit 2
+        )
+        assert result["commands_applied"] == 2  # undo commits 4, 3
+        assert result["snapshot_restored"] is None
+        assert result["strategy"] == "backward"
+
+
 class TestRollbackIntegration:
     """Integration tests for the rollback workflow."""
 
@@ -151,7 +304,7 @@ class TestRollbackIntegration:
         # Snapshots at commit 3 and 6
         assert Snapshot.objects.filter(connection_profile=connection_profile).count() == 2
 
-        # Rollback to commit 2
+        # Rollback to commit 2 — no prev snapshot, next snapshot at 3 → backward
         result = rollback_to_version(
             user_id=user.id,
             connection_profile_id=connection_profile.id,
@@ -159,7 +312,7 @@ class TestRollbackIntegration:
         )
         assert result["rolled_back_to"] == vids[1]
         assert result["status"] == "success"
-        assert result["anti_commands_applied"] >= 1
+        assert result["commands_applied"] >= 1
 
         # Only commits 1 and 2 should remain
         remaining = CommitEvent.objects.filter(connection_profile=connection_profile).count()
@@ -173,14 +326,16 @@ class TestRollbackIntegration:
         # Snapshots at commits 3, 6, 9
         assert Snapshot.objects.filter(connection_profile=connection_profile).count() == 3
 
-        # Rollback to commit 5 — should use snapshot at commit 3 (timestamp <= commit 5)
+        # Rollback to commit 5 — prev snapshot at 3, next at 6
+        # position = 5-3 = 2, threshold = ceil(3/2) = 2 → forward from S1
         result = rollback_to_version(
             user_id=user.id,
             connection_profile_id=connection_profile.id,
             target_version_id=vids[4],
         )
         assert result["status"] == "success"
-        # Snapshot should have been restored (at commit 3)
+        assert result["strategy"] == "forward"
+        assert result["commands_applied"] == 2  # replay commits 4, 5
         if result["snapshot_restored"]:
             mock_s3["download"].assert_called()
 
@@ -209,7 +364,7 @@ class TestRollbackIntegration:
             connection_profile_id=connection_profile.id,
             target_version_id=vids[0],
         )
-        assert result["anti_commands_applied"] == 2
+        assert result["commands_applied"] == 2
         # Verify the inverse SQL was actually executed on the mock connection
         mock_cursor = mock_psycopg2_connect._mock_cursor
         assert mock_cursor.execute.call_count == 2
@@ -223,7 +378,7 @@ class TestRollbackIntegration:
         result = rollback_to_version(
             user_id=user.id,
             connection_profile_id=connection_profile.id,
-            target_version_id=vids[2],  # Commit 3 — snapshot at commit 2 is nearest
+            target_version_id=vids[2],  # Commit 3 — snapshot at commit 2 is nearest prev
         )
         assert result["status"] == "success"
         if result["snapshot_restored"]:
