@@ -1,18 +1,22 @@
 """WebSocket virtual psql terminal.
 
 Provides an interactive terminal experience over WebSocket backed by a real
-psycopg2 connection to the user's external database.  Authentication is
-performed via a JWT token passed as a query parameter (WebSocket connections
-cannot carry an Authorization header).
+psycopg2 connection to the user's external database.  Authentication uses a
+short-lived, single-use ticket obtained via the /terminal/ticket endpoint,
+avoiding JWT exposure in WebSocket query strings (which can appear in logs).
 """
 
 import asyncio
 import logging
+import secrets
+import time
+from typing import Optional
 
 import jwt
 import psycopg2
-from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
 
+from fastapi_backend.app.auth import get_current_user
 from fastapi_backend.app.config import JWT_ALGORITHM, JWT_SECRET_KEY
 from connections.models import ConnectionProfile
 
@@ -22,12 +26,45 @@ router = APIRouter(prefix="/terminal", tags=["Terminal"])
 
 _PROMPT = "\r\n\x1b[1;32m{db}=# \x1b[0m"
 
+# In-memory store for single-use tickets: {ticket: {user_id, connection_profile_id, expires}}
+_TICKET_STORE: dict[str, dict] = {}
+_TICKET_TTL = 30  # seconds
 
-def _auth(token: str) -> dict:
-    payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
-    if not payload.get("user_id"):
-        raise ValueError("no user_id in token")
-    return payload
+
+def _issue_ticket(user_id: int, connection_profile_id: int) -> str:
+    """Create a short-lived single-use ticket."""
+    # Purge expired tickets
+    now = time.monotonic()
+    expired = [k for k, v in _TICKET_STORE.items() if v["expires"] < now]
+    for k in expired:
+        del _TICKET_STORE[k]
+    ticket = secrets.token_urlsafe(32)
+    _TICKET_STORE[ticket] = {
+        "user_id": user_id,
+        "connection_profile_id": connection_profile_id,
+        "expires": now + _TICKET_TTL,
+    }
+    return ticket
+
+
+def _redeem_ticket(ticket: str) -> Optional[dict]:
+    """Consume a ticket, returning the payload or None if invalid/expired."""
+    data = _TICKET_STORE.pop(ticket, None)
+    if data is None:
+        return None
+    if time.monotonic() > data["expires"]:
+        return None
+    return data
+
+
+@router.post("/ticket")
+def create_ticket(
+    connection_profile_id: int,
+    current_user: dict = Depends(get_current_user),
+):
+    """Exchange a JWT for a short-lived, single-use WebSocket ticket."""
+    ticket = _issue_ticket(current_user["user_id"], connection_profile_id)
+    return {"ticket": ticket}
 
 
 def _fmt(cur) -> str:
@@ -60,19 +97,19 @@ def _fmt(cur) -> str:
 @router.websocket("/ws")
 async def terminal_ws(
     websocket: WebSocket,
-    token: str = Query(...),
-    connection_profile_id: int = Query(...),
+    ticket: str = Query(...),
 ):
     await websocket.accept()
 
-    # --- Authenticate ---
-    try:
-        payload = _auth(token)
-        user_id = payload["user_id"]
-    except Exception:
+    # --- Authenticate via single-use ticket ---
+    ticket_data = _redeem_ticket(ticket)
+    if not ticket_data:
         await websocket.send_text("\x1b[31mAuthentication failed.\x1b[0m\r\n")
         await websocket.close(code=4001)
         return
+
+    user_id = ticket_data["user_id"]
+    connection_profile_id = ticket_data["connection_profile_id"]
 
     # --- Fetch connection profile ---
     try:

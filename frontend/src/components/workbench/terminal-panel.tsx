@@ -1,7 +1,9 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import dynamic from "next/dynamic";
 import { useWorkspace } from "@/lib/workspace-context";
+import { getTerminalTicket } from "@/lib/api";
 
 const XtermTerminal = dynamic(
   () => import("@/components/workbench/xterm-terminal").then((m) => m.XtermTerminal),
@@ -15,15 +17,36 @@ const XtermTerminal = dynamic(
   }
 );
 
-const WS_BASE = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(
+const WS_BASE = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001").replace(
   /^http/,
   "ws"
 );
 
 export function TerminalPanel() {
   const { activeConnection } = useWorkspace();
-  const token =
-    typeof window !== "undefined" ? localStorage.getItem("access_token") ?? "" : "";
+  const [wsUrl, setWsUrl] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setWsUrl(null);
+    setError(null);
+    if (!activeConnection) return;
+
+    let cancelled = false;
+    getTerminalTicket(activeConnection.id)
+      .then((ticket) => {
+        if (!cancelled) {
+          setWsUrl(`${WS_BASE}/terminal/ws?ticket=${encodeURIComponent(ticket)}`);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Failed to obtain terminal ticket");
+        }
+      });
+
+    return () => { cancelled = true; };
+  }, [activeConnection]);
 
   return (
     <div
@@ -68,10 +91,18 @@ export function TerminalPanel() {
           <div style={{ padding: "24px 16px", color: "var(--muted-foreground)", fontSize: 12 }}>
             Select a connection to start a psql session.
           </div>
+        ) : error ? (
+          <div style={{ padding: "24px 16px", color: "var(--destructive, red)", fontSize: 12 }}>
+            {error}
+          </div>
+        ) : !wsUrl ? (
+          <div style={{ padding: "24px 16px", color: "var(--muted-foreground)", fontSize: 12 }}>
+            Connecting...
+          </div>
         ) : (
           <XtermTerminal
-            key={activeConnection.id}
-            wsUrl={`${WS_BASE}/terminal/ws?token=${token}&connection_profile_id=${activeConnection.id}`}
+            key={wsUrl}
+            wsUrl={wsUrl}
           />
         )}
       </div>

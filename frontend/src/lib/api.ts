@@ -1,4 +1,4 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001";
 
 interface RequestOptions {
   method?: string;
@@ -58,7 +58,7 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 
 export interface TokenResponse {
   access: string;
-  refresh: string;
+  refresh?: string;
 }
 
 export interface RegisterResponse {
@@ -91,7 +91,9 @@ export async function refreshToken(): Promise<TokenResponse> {
     body: { refresh },
   });
   localStorage.setItem("access_token", data.access);
-  localStorage.setItem("refresh_token", data.refresh);
+  if (data.refresh) {
+    localStorage.setItem("refresh_token", data.refresh);
+  }
   return data;
 }
 
@@ -248,6 +250,15 @@ export function listAntiCommands(connectionProfileId: number): Promise<AntiComma
 
 export function getAntiCommand(versionId: string): Promise<AntiCommand> {
   return request(`/anticommands/${versionId}`);
+}
+
+// ---------- Terminal ----------
+
+export function getTerminalTicket(connectionProfileId: number): Promise<string> {
+  return request<{ ticket: string }>(
+    `/terminal/ticket?connection_profile_id=${connectionProfileId}`,
+    { method: "POST" },
+  ).then((r) => r.ticket);
 }
 
 export { ApiError };

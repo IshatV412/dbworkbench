@@ -24,10 +24,11 @@ logger = logging.getLogger(__name__)
 
 # -- Frequency management ------------------------------------------------------
 
-def get_snapshot_frequency(connection_profile_id: int) -> int:
-    """Read the snapshot frequency for a connection profile."""
+def get_snapshot_frequency(user_id: int, connection_profile_id: int) -> int:
+    """Read the snapshot frequency for a connection profile owned by the user."""
+    profile = ConnectionProfile.objects.get(id=connection_profile_id, user_id=user_id)
     try:
-        policy = SnapshotPolicy.objects.get(connection_profile_id=connection_profile_id)
+        policy = SnapshotPolicy.objects.get(connection_profile=profile)
         return policy.frequency
     except SnapshotPolicy.DoesNotExist:
         return SNAPSHOT_FREQUENCY_DEFAULT

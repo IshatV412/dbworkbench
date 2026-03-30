@@ -242,7 +242,7 @@ export function VersionPanel() {
               }}
               title="Take a manual pg_dump snapshot"
             >
-              {snapshotting ? "Savingâ€¦" : "+ Snapshot"}
+              {snapshotting ? "Saving..." : "+ Snapshot"}
             </button>
           )}
           <button
@@ -258,7 +258,7 @@ export function VersionPanel() {
             }}
             title="Refresh"
           >
-            â†»
+            ↻
           </button>
         </div>
       </div>

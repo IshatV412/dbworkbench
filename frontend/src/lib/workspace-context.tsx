@@ -36,19 +36,22 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const [schemaMeta, setSchemaMeta] = useState<SchemaMetadata>({ schemas: [], tables: {}, columns: {} });
   const listenersRef = useRef<Map<string, Set<EventCallback>>>(new Map());
 
+  const activeConnectionRef = useRef(activeConnection);
+  activeConnectionRef.current = activeConnection;
+
   const refreshConnections = useCallback(async () => {
     setIsLoadingConnections(true);
     try {
       const data = await listConnections();
       setConnections(data);
       // If active connection was deleted, clear it
-      if (activeConnection && !data.find((c) => c.id === activeConnection.id)) {
+      if (activeConnectionRef.current && !data.find((c) => c.id === activeConnectionRef.current!.id)) {
         setActiveConnection(null);
       }
     } finally {
       setIsLoadingConnections(false);
     }
-  }, [activeConnection]);
+  }, []);
 
   const emit = useCallback((event: string, data?: unknown) => {
     const cbs = listenersRef.current.get(event);
