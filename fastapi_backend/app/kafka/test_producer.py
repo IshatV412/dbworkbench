@@ -72,8 +72,8 @@ def _generate_commit_logs(count: int) -> list[tuple[str, bytes, bytes]]:
             version_id=str(uuid.uuid4()),
             seq=i + 1,
             sql_command=_SAMPLE_SQL[i % len(_SAMPLE_SQL)],
-            user_id=(i % 3) + 1,
-            connection_profile_id=(i % 2) + 1,
+            user_id=1,
+            connection_profile_id=1,
             status="applied",
         )
         messages.append((COMMIT_LOGS, key, value))
@@ -86,10 +86,10 @@ def _generate_snapshot_tasks(count: int) -> list[tuple[str, bytes, bytes]]:
     for i in range(count):
         vid = str(uuid.uuid4())
         key, value = build_snapshot_task(
-            connection_profile_id=(i % 2) + 1,
-            s3_key=f"snapshots/profile-{(i % 2) + 1}/{vid}.sql.gz",
+            connection_profile_id=1,
+            s3_key=f"snapshots/profile-1/{vid}.sql.gz",
             version_id=vid,
-            user_id=(i % 3) + 1,
+            user_id=1,
         )
         messages.append((SNAPSHOT_TASKS, key, value))
     return messages
@@ -102,8 +102,8 @@ def _generate_events(count: int) -> list[tuple[str, bytes, bytes]]:
         etype = _EVENT_TYPES[i % len(_EVENT_TYPES)]
         key, value = build_event(
             event_type=etype,
-            user_id=(i % 3) + 1,
-            connection_profile_id=(i % 2) + 1,
+            user_id=1,
+            connection_profile_id=1,
             details={
                 "version_id": str(uuid.uuid4()),
                 "info": f"Dummy event #{i + 1} of type '{etype}'",
