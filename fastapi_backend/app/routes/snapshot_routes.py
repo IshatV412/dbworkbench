@@ -44,6 +44,7 @@ def get_frequency(
             user_id=current_user["user_id"],
             connection_profile_id=connection_profile_id,
         )
+        freq = get_snapshot_frequency(connection_profile_id)
         return {"frequency": freq}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

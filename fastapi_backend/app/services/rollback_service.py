@@ -50,6 +50,12 @@ def rollback_to_version(
     snapshot_info = None
 
     # Identify commits after target (to be deleted regardless of strategy)
+    # 3. Restore snapshot on the user's external database
+    if snapshot:
+        restore_snapshot_data(snapshot.s3_key, profile)
+        snapshot_info = snapshot.s3_key
+
+    # 4. Get all commits AFTER the target, in reverse chronological order
     commits_after = CommitEvent.objects.filter(
         connection_profile=profile,
         user=user,
@@ -104,6 +110,33 @@ def rollback_to_version(
 
     # Delete stale commit records so history stays clean
     # InverseOperations cascade-delete automatically
+
+    # Capture IDs before iteration so we can delete them after
+    stale_ids = list(commits_after.values_list("id", flat=True))
+
+    # 5. Apply inverse operations on the user's external database
+    conn = get_user_connection(profile)
+    applied = 0
+    try:
+        cur = conn.cursor()
+        for commit in commits_after:
+            try:
+                inverse = commit.inverse_operation
+                cur.execute(inverse.inverse_sql)
+                applied += 1
+            except InverseOperation.DoesNotExist:
+                # Should never happen per the atomic write guarantee,
+                # but limit blast radius per REQ-11
+                continue
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+    # 6. Delete stale commit records so history stays clean
+    #    InverseOperations cascade-delete automatically
     CommitEvent.objects.filter(id__in=stale_ids).delete()
 
     return {

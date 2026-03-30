@@ -43,8 +43,53 @@ frontend/.env.local
 *.swo
 *.sublime-project
 *.sublime-workspace
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.ipynb_checkpoints/
+
+# Virtual environments
+.venv/
+venv/
+
+# Config / secrets
+*.yaml
+.env
+.env.*
+
+# IDE
+.vscode/
+.idea/
 
 # OS
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Certs
+certs/
+
+# Django
+*.pyc
+db.sqlite3
+*.sqlite3
+*.log
+
+# Migrations are version-controlled — don't ignore them
+
+# Snapshot temp files
+*.sql.tmp
+
+# Pytest
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# Claude Code
+.claude/
