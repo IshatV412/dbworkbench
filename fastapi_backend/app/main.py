@@ -23,6 +23,8 @@ from fastapi_backend.app.routes.anticommand_routes import router as anticommand_
 from fastapi_backend.app.routes.snapshot_routes import router as snapshot_router
 from fastapi_backend.app.routes.rollback_routes import router as rollback_router
 
+from fastapi_backend.app.kafka import producer as kafka_producer
+
 logger = logging.getLogger(__name__)
 
 _cors_origins_env = os.getenv("BACKEND_CORS_ORIGINS", "").strip()
@@ -36,11 +38,18 @@ ALLOWED_ORIGINS = (
 async def lifespan(app: FastAPI):
     """Startup / shutdown lifecycle.
 
-    No connection pool to init — connections are created dynamically
-    per-user via ConnectionProfile.  Django ORM is already bootstrapped.
+    - Initialise the Kafka producer (non-blocking; degrades gracefully).
+    - No connection pool to init — connections are created dynamically
+      per-user via ConnectionProfile.  Django ORM is already bootstrapped.
     """
-    logger.info("FastAPI started — Django ORM bootstrapped, dynamic user connections ready.")
+    kafka_ok = kafka_producer.init_producer()
+    logger.info(
+        "FastAPI started — Django ORM bootstrapped, dynamic user connections ready. "
+        "Kafka producer %s.",
+        "enabled" if kafka_ok else "disabled (falling back to sync)",
+    )
     yield
+    kafka_producer.shutdown()
 
 
 app = FastAPI(

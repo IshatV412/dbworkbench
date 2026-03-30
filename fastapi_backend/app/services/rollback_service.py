@@ -15,6 +15,7 @@ Algorithm (optimised snapshot-distance strategy):
 
 from __future__ import annotations
 
+import logging
 import math
 
 from authentication.models import User
@@ -26,6 +27,11 @@ from fastapi_backend.app.services.snapshot_service import (
     get_snapshot_frequency,
     restore_snapshot_data,
 )
+from fastapi_backend.app.kafka import producer as kafka_producer
+from fastapi_backend.app.kafka.topics import EVENTS
+from fastapi_backend.app.kafka.schemas import build_event
+
+logger = logging.getLogger(__name__)
 
 
 def rollback_to_version(
@@ -159,13 +165,27 @@ def rollback_to_version(
         seq__gt=target_commit.seq,
     ).delete()
 
-    return {
+    result = {
         "rolled_back_to": target_version_id,
         "snapshot_restored": snapshot_info,
         "commands_applied": applied,
         "strategy": strategy,
         "status": "success",
     }
+
+    # 6. Emit rollback event via Kafka (fire-and-forget)
+    try:
+        key, value = build_event(
+            event_type="rollback_completed",
+            user_id=user.id,
+            connection_profile_id=profile.id,
+            details=result,
+        )
+        kafka_producer.produce(EVENTS, key=key, value=value)
+    except Exception:
+        logger.debug("Failed to produce rollback event", exc_info=True)
+
+    return result
 
 
 # -- Internal helpers ----------------------------------------------------------

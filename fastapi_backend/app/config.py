@@ -18,4 +18,4 @@ S3_REGION = os.getenv("S3_REGION", "us-east-1")
 SNAPSHOT_FREQUENCY_DEFAULT = int(os.getenv("SNAPSHOT_FREQUENCY_DEFAULT", "5"))
 
 # Django base URL — used by the auth proxy routes to forward token/register requests
-DJANGO_BASE_URL = os.getenv("DJANGO_BASE_URL", "http://localhost:8000")
+DJANGO_BASE_URL = os.getenv("DJANGO_BASE_URL", "http://localhost:8001")

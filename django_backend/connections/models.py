@@ -20,12 +20,12 @@ class ConnectionProfile(models.Model):
 
     def save(self, *args, **kwargs):
         if not self.db_password.startswith('gAAAAA'):
-            f = Fernet(os.environ.get('FERNET_KEY').encode())
+            f = Fernet(os.environ['FERNET_KEY'].encode())
             self.db_password = f.encrypt(self.db_password.encode()).decode()
         super().save(*args, **kwargs)
 
     def get_decrypted_password(self):
-        f = Fernet(os.environ.get('FERNET_KEY').encode())
+        f = Fernet(os.environ['FERNET_KEY'].encode())
         return f.decrypt(self.db_password.encode()).decode()
 
     def __str__(self):
