@@ -7,6 +7,11 @@ Metadata is managed via Django ORM (Snapshot, SnapshotPolicy).
 
 from __future__ import annotations
 
+import logging
+import os
+import subprocess
+import tempfile
+import uuid
 import os
 import subprocess
 import tempfile
@@ -17,6 +22,16 @@ from core.models import Snapshot, SnapshotPolicy
 from fastapi_backend.app.utils.s3_utils import upload_snapshot, download_snapshot
 from fastapi_backend.app.config import SNAPSHOT_FREQUENCY_DEFAULT
 
+logger = logging.getLogger(__name__)
+
+
+# -- Frequency management ------------------------------------------------------
+
+def get_snapshot_frequency(user_id: int, connection_profile_id: int) -> int:
+    """Read the snapshot frequency for a connection profile owned by the user."""
+    profile = ConnectionProfile.objects.get(id=connection_profile_id, user_id=user_id)
+    try:
+        policy = SnapshotPolicy.objects.get(connection_profile=profile)
 
 # -- Frequency management ------------------------------------------------------
 
@@ -126,3 +141,30 @@ def list_snapshots_for_profile(user_id: int, connection_profile_id: int) -> list
         }
         for s in snapshots
     ]
+
+
+def create_manual_snapshot(user_id: int, connection_profile_id: int) -> dict:
+    """Manually trigger a pg_dump snapshot and record it in Django."""
+    profile = ConnectionProfile.objects.get(id=connection_profile_id, user_id=user_id)
+    version_id = str(uuid.uuid4())
+    s3_key = f"snapshots/{connection_profile_id}/manual_{version_id}"
+
+    snapshot = Snapshot.objects.create(
+        version_id=version_id,
+        s3_key=s3_key,
+        connection_profile=profile,
+    )
+
+    # Best-effort S3 upload — metadata is saved regardless
+    try:
+        upload_snapshot_data(profile, s3_key)
+    except Exception as e:
+        logger.warning("Manual snapshot S3 upload failed (metadata saved): %s", e)
+
+    return {
+        "snapshot_id": str(snapshot.snapshot_id),
+        "version_id": snapshot.version_id,
+        "s3_key": snapshot.s3_key,
+        "created_at": snapshot.created_at,
+        "connection_profile_id": snapshot.connection_profile_id,
+    }

@@ -4,6 +4,45 @@ __pycache__/
 *.pyo
 *.pyd
 *.egg-info/
+*.egg
+dist/
+build/
+.venv/
+*.venv
+.env
+.env.*
+
+# Python tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+coverage/
+htmlcov/
+.coverage
+.coverage.*
+
+# Django
+db.sqlite3
+media/
+staticfiles/
+
+# Logs
+*.log
+logs/
+
+# Frontend
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.env.local
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-project
+*.sublime-workspace
 dist/
 build/
 .pytest_cache/
@@ -30,6 +69,7 @@ venv/
 # OS
 .DS_Store
 Thumbs.db
+desktop.ini
 
 # Certs
 certs/

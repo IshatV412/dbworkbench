@@ -1,0 +1,89 @@
+@import "tailwindcss";
+@import "@xterm/xterm/css/xterm.css";
+
+:root {
+  --background: #0f1117;
+  --foreground: #e2e8f0;
+  --card: #161b27;
+  --card-foreground: #e2e8f0;
+  --popover: #1e2433;
+  --popover-foreground: #e2e8f0;
+  --primary: #4e9cf5;
+  --primary-foreground: #ffffff;
+  --secondary: #252d3d;
+  --secondary-foreground: #e2e8f0;
+  --muted: #252d3d;
+  --muted-foreground: #8b9db5;
+  --accent: #2a3450;
+  --accent-foreground: #e2e8f0;
+  --destructive: #f87171;
+  --destructive-foreground: #ffffff;
+  --border: #2e3a50;
+  --input: #252d3d;
+  --ring: #4e9cf5;
+  --sidebar-bg: #131a27;
+  --sidebar-header: #0f1520;
+  --sidebar-hover: #1a2336;
+  --sidebar-active: #1e2d44;
+  --toolbar-bg: #0f1520;
+  --toolbar-border: #1e2d44;
+  --panel-bg: #131a27;
+  --editor-bg: #1a1f2e;
+  --grid-header: #0f1520;
+  --grid-row-alt: #161c2a;
+  --grid-border: #253045;
+  --terminal-bg: #0a0d14;
+  --status-bar: #1565C0;
+  --resize-handle: #2e3a50;
+  --resize-handle-active: #4e9cf5;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--background);
+  color: var(--foreground);
+}
+
+/* Scrollbar styling for dark theme */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: var(--background);
+}
+::-webkit-scrollbar-thumb {
+  background: #3a3a3a;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
+/* react-resizable-panels v4 — uses data-group / data-separator attributes */
+[data-separator] {
+  background: var(--resize-handle);
+  transition: background 0.15s;
+  position: relative;
+  z-index: 1;
+}
+[data-separator]:hover,
+[data-separator="drag"] {
+  background: var(--resize-handle-active);
+}
+
+/* Panel group fills its container */
+[data-group] {
+  height: 100%;
+  overflow: hidden;
+}
+[data-panel] {
+  overflow: hidden;
+}

@@ -1,13 +1,14 @@
 """Rollback service — restore user's database to a previous version.
 
-Algorithm (from context.md):
-1. Find the nearest Snapshot before the target version
-2. Restore that snapshot on the user's external DB
-3. Replay InverseOperations between the snapshot and the target
-   version in reverse chronological order
-4. If any inverse operation fails, rollback impact is limited to
-   the interval between two adjacent snapshots
-5. Delete stale CommitEvent records for all commits after the target
+Algorithm:
+A) If a snapshot at or before the target exists:
+   1. Restore that snapshot on the user's external DB
+   2. Replay forward sql_commands from commits after the snapshot
+      up to and including the target, in chronological order
+B) If no snapshot exists:
+   1. Apply inverse operations for commits after the target,
+      in reverse chronological order (undo from current state)
+C) Delete stale CommitEvent records for all commits after the target
    so the commit history stays clean (InverseOperations cascade-delete)
 """
 
@@ -48,6 +49,7 @@ def rollback_to_version(
 
     snapshot_info = None
 
+    # Identify commits after target (to be deleted regardless of strategy)
     # 3. Restore snapshot on the user's external database
     if snapshot:
         restore_snapshot_data(snapshot.s3_key, profile)
@@ -59,6 +61,55 @@ def rollback_to_version(
         user=user,
         timestamp__gt=target_commit.timestamp,
     ).order_by("-timestamp")
+    stale_ids = list(commits_after.values_list("id", flat=True))
+
+    conn = get_user_connection(profile)
+    applied = 0
+
+    if snapshot:
+        # Strategy A: Restore snapshot, then replay forward to target
+        restore_snapshot_data(snapshot.s3_key, profile)
+        snapshot_info = snapshot.s3_key
+
+        # Replay commits from after the snapshot up to and including the target
+        commits_to_replay = CommitEvent.objects.filter(
+            connection_profile=profile,
+            user=user,
+            timestamp__gt=snapshot.created_at,
+            timestamp__lte=target_commit.timestamp,
+        ).order_by("timestamp")
+
+        try:
+            cur = conn.cursor()
+            for commit in commits_to_replay:
+                cur.execute(commit.sql_command)
+                applied += 1
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+    else:
+        # Strategy B: No snapshot — undo from current state using inverses
+        try:
+            cur = conn.cursor()
+            for commit in commits_after:
+                try:
+                    inverse = commit.inverse_operation
+                    cur.execute(inverse.inverse_sql)
+                    applied += 1
+                except InverseOperation.DoesNotExist:
+                    continue
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    # Delete stale commit records so history stays clean
+    # InverseOperations cascade-delete automatically
 
     # Capture IDs before iteration so we can delete them after
     stale_ids = list(commits_after.values_list("id", flat=True))
