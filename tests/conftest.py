@@ -17,19 +17,20 @@ import pytest
 # ---------------------------------------------------------------------------
 _django_backend_dir = Path(__file__).resolve().parent.parent / "django_backend"
 
-os.environ.setdefault("SECRET_KEY", "test-secret-key-for-pytest")
-os.environ.setdefault("DB_NAME", "weavedb_internal")
-os.environ.setdefault("DB_USER", "postgres")
-os.environ.setdefault("DB_PASSWORD", "postgres")
-os.environ.setdefault("DB_HOST", "localhost")
-os.environ.setdefault("DB_PORT", "5432")
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "django_backend.settings")
+# Force-set test credentials so real .env values are NEVER used in tests.
+os.environ["SECRET_KEY"] = "test-secret-key-for-pytest"
+os.environ["DB_NAME"] = "weavedb_internal"
+os.environ["DB_USER"] = "postgres"
+os.environ["DB_PASSWORD"] = "postgres"
+os.environ["DB_HOST"] = "localhost"
+os.environ["DB_PORT"] = "5432"
+os.environ["DJANGO_SETTINGS_MODULE"] = "django_backend.settings"
 
 # Fernet key — test-only, not a real secret
-os.environ.setdefault("FERNET_KEY", "fCYdNhBhGgcHeBl7f5fqRet1pfLQdaflzoZAOLoysvM=")
+os.environ["FERNET_KEY"] = "fCYdNhBhGgcHeBl7f5fqRet1pfLQdaflzoZAOLoysvM="
 
 # JWT secret shared between Django and FastAPI
-os.environ.setdefault("JWT_SECRET_KEY", "test-jwt-secret-for-pytest")
+os.environ["JWT_SECRET_KEY"] = "test-jwt-secret-for-pytest"
 
 # Ensure django_backend is on the path
 if str(_django_backend_dir) not in sys.path:
@@ -38,6 +39,13 @@ if str(_django_backend_dir) not in sys.path:
 import django  # noqa: E402
 
 django.setup()
+
+# Ensure Django's cached settings also use our test JWT key, even if
+# django_setup.py loaded .env before conftest force-set the env vars.
+from django.conf import settings as _dj_settings  # noqa: E402
+
+if hasattr(_dj_settings, "SIMPLE_JWT"):
+    _dj_settings.SIMPLE_JWT["SIGNING_KEY"] = os.environ["JWT_SECRET_KEY"]
 
 # ---------------------------------------------------------------------------
 # Django model imports (after setup)
