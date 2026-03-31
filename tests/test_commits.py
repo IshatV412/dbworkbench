@@ -1,6 +1,7 @@
 """Tests for commit service — versioned write operations.
 
 Covers: TC_41, TC_42, TC_44, TC_51, TC_25, TC_63, TC_67, TC_70
+Plus Kafka integration, connection lifecycle, edge cases, ownership isolation.
 """
 
 import uuid
@@ -9,12 +10,16 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from core.models import CommitEvent, InverseOperation, Snapshot, SnapshotPolicy
+from connections.models import ConnectionProfile
 from fastapi_backend.app.services.commit_service import (
     _validate_write_sql,
+    _append_returning_star,
+    _rows_to_dicts,
     create_commit,
     list_commits,
     get_commit,
 )
+from fastapi_backend.app.kafka.topics import SNAPSHOT_TASKS, COMMIT_LOGS
 from fastapi_backend.app.services.inverse_engine import InverseCommand, CommandCategory
 
 
@@ -45,52 +50,120 @@ class TestValidateWriteSQL:
     """Tests for the _validate_write_sql() validator."""
 
     def test_insert_allowed(self):
-        """Verify INSERT is a valid write keyword."""
         _validate_write_sql("INSERT INTO t(id) VALUES (1)")
 
     def test_update_allowed(self):
-        """Verify UPDATE is allowed."""
         _validate_write_sql("UPDATE t SET x = 1 WHERE id = 1")
 
     def test_delete_allowed(self):
-        """Verify DELETE is allowed."""
         _validate_write_sql("DELETE FROM t WHERE id = 1")
 
     def test_alter_allowed(self):
-        """Verify ALTER is allowed."""
         _validate_write_sql("ALTER TABLE t ADD COLUMN y INT")
 
     def test_create_allowed(self):
-        """Verify CREATE is allowed."""
         _validate_write_sql("CREATE TABLE t (id INT)")
 
     def test_drop_allowed(self):
-        """Verify DROP is allowed."""
         _validate_write_sql("DROP TABLE t")
 
     def test_truncate_allowed(self):
-        """Verify TRUNCATE is allowed."""
         _validate_write_sql("TRUNCATE TABLE t")
 
     def test_select_rejected(self):
-        """Verify SELECT is rejected for writes."""
         with pytest.raises(ValueError, match="SELECT"):
             _validate_write_sql("SELECT * FROM t")
 
     def test_empty_sql_rejected(self):
-        """Verify empty SQL is rejected."""
         with pytest.raises(ValueError, match="empty"):
             _validate_write_sql("")
 
+    def test_whitespace_only_rejected(self):
+        with pytest.raises(ValueError, match="empty"):
+            _validate_write_sql("   ")
+
     def test_multiple_statements_rejected(self):
-        """Verify multiple statements are rejected."""
         with pytest.raises(ValueError, match="single"):
             _validate_write_sql("INSERT INTO t(id) VALUES (1); INSERT INTO t(id) VALUES (2)")
 
     def test_unknown_keyword_rejected(self):
-        """Verify unknown SQL keywords are rejected."""
         with pytest.raises(ValueError, match="not allowed"):
             _validate_write_sql("GRANT ALL ON t TO user1")
+
+    def test_case_insensitive_keywords(self):
+        """Verify mixed-case keywords are correctly identified."""
+        _validate_write_sql("insert into t(id) values (1)")
+        _validate_write_sql("Insert Into t(id) VALUES (1)")
+        _validate_write_sql("DELETE from t WHERE id = 1")
+
+    def test_leading_whitespace_handled(self):
+        """Verify SQL with leading/trailing whitespace passes."""
+        _validate_write_sql("  INSERT INTO t(id) VALUES (1)  ")
+
+    def test_trailing_semicolon_single_statement(self):
+        """Verify single statement with trailing semicolon is accepted."""
+        _validate_write_sql("INSERT INTO t(id) VALUES (1);")
+
+    def test_show_rejected(self):
+        """Verify SHOW is not a write keyword."""
+        with pytest.raises(ValueError, match="not allowed"):
+            _validate_write_sql("SHOW tables")
+
+    def test_explain_rejected(self):
+        """Verify EXPLAIN is not a write keyword."""
+        with pytest.raises(ValueError, match="not allowed"):
+            _validate_write_sql("EXPLAIN SELECT * FROM t")
+
+
+class TestAppendReturningStar:
+    """Tests for the _append_returning_star() helper."""
+
+    def test_appends_returning(self):
+        result = _append_returning_star("INSERT INTO t(id) VALUES (1)")
+        assert result.endswith("RETURNING *")
+
+    def test_no_double_returning(self):
+        """Verify it doesn't add RETURNING * if already present."""
+        sql = "INSERT INTO t(id) VALUES (1) RETURNING *"
+        result = _append_returning_star(sql)
+        assert result.count("RETURNING") == 1
+
+    def test_case_insensitive_returning_detection(self):
+        """Verify it detects existing RETURNING regardless of case."""
+        sql = "INSERT INTO t(id) VALUES (1) returning id"
+        result = _append_returning_star(sql)
+        assert result.count("returning") == 1  # unchanged
+
+    def test_strips_trailing_semicolon(self):
+        """Verify trailing semicolon is removed before appending."""
+        result = _append_returning_star("INSERT INTO t(id) VALUES (1);")
+        assert not result.endswith(";")
+        assert result.endswith("RETURNING *")
+
+
+class TestRowsToDicts:
+    """Tests for the _rows_to_dicts() helper."""
+
+    def test_converts_rows(self):
+        mock_cursor = MagicMock()
+        mock_cursor.description = [("id",), ("name",)]
+        mock_cursor.fetchall.return_value = [(1, "Alice"), (2, "Bob")]
+        result = _rows_to_dicts(mock_cursor)
+        assert result == [{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}]
+
+    def test_empty_rows(self):
+        mock_cursor = MagicMock()
+        mock_cursor.description = [("id",)]
+        mock_cursor.fetchall.return_value = []
+        result = _rows_to_dicts(mock_cursor)
+        assert result == []
+
+    def test_no_description(self):
+        mock_cursor = MagicMock()
+        mock_cursor.description = None
+        mock_cursor.fetchall.return_value = []
+        result = _rows_to_dicts(mock_cursor)
+        assert result == []
 
 
 class TestCreateCommit:
@@ -110,7 +183,6 @@ class TestCreateCommit:
         assert result["timestamp"] is not None
         assert result["connection_profile_id"] == connection_profile.id
 
-        # Verify persisted
         commit = CommitEvent.objects.get(version_id=result["version_id"])
         assert commit.sql_command == "INSERT INTO t(id) VALUES (1)"
 
@@ -136,7 +208,6 @@ class TestCreateCommit:
             connection_profile_id=connection_profile.id,
             sql_command="INSERT INTO t(id) VALUES (42)",
         )
-        # Simulate fresh session — new QuerySet
         fetched = CommitEvent.objects.get(version_id=result["version_id"])
         assert fetched.sql_command == "INSERT INTO t(id) VALUES (42)"
 
@@ -164,7 +235,6 @@ class TestCreateCommit:
             connection_profile_id=connection_profile.id,
             sql_command="INSERT INTO t(id) VALUES (1)",
         )
-        # Snapshot should have been created and upload_snapshot_data called
         assert Snapshot.objects.filter(connection_profile=connection_profile).count() >= 1
 
     def test_write_returns_affected_row_count_metadata(self, user, connection_profile, mock_psycopg2_connect, mock_s3, mock_inverse_engine):
@@ -194,6 +264,68 @@ class TestCreateCommit:
         )
         inv = InverseOperation.objects.get(commit__version_id=result["version_id"])
         assert inv.inverse_sql == "DELETE FROM t WHERE id = 1"
+
+    def test_connection_rolled_back_on_failure(self, user, connection_profile, mock_psycopg2_connect, mock_inverse_engine):
+        """Verify connection.rollback() is called when SQL execution fails."""
+        mock_psycopg2_connect._mock_cursor.execute.side_effect = Exception("DB error")
+        with pytest.raises(Exception, match="DB error"):
+            create_commit(
+                user_id=user.id,
+                connection_profile_id=connection_profile.id,
+                sql_command="INSERT INTO t(id) VALUES (1)",
+            )
+        mock_psycopg2_connect._mock_conn.rollback.assert_called()
+
+    def test_connection_closed_on_success(self, user, connection_profile, mock_psycopg2_connect, mock_s3, mock_inverse_engine):
+        """Verify connection is closed after successful execution."""
+        create_commit(
+            user_id=user.id,
+            connection_profile_id=connection_profile.id,
+            sql_command="INSERT INTO t(id) VALUES (1)",
+        )
+        mock_psycopg2_connect._mock_conn.close.assert_called_once()
+
+    def test_connection_closed_on_failure(self, user, connection_profile, mock_psycopg2_connect, mock_inverse_engine):
+        """Verify connection is closed even after failure."""
+        mock_psycopg2_connect._mock_cursor.execute.side_effect = Exception("fail")
+        with pytest.raises(Exception):
+            create_commit(
+                user_id=user.id,
+                connection_profile_id=connection_profile.id,
+                sql_command="INSERT INTO t(id) VALUES (1)",
+            )
+        mock_psycopg2_connect._mock_conn.close.assert_called_once()
+
+    def test_wrong_user_profile_raises(self, user, other_profile, mock_psycopg2_connect):
+        """Verify accessing another user's profile raises DoesNotExist."""
+        with pytest.raises(ConnectionProfile.DoesNotExist):
+            create_commit(
+                user_id=user.id,
+                connection_profile_id=other_profile.id,
+                sql_command="INSERT INTO t(id) VALUES (1)",
+            )
+
+    def test_nonexistent_user_raises(self, connection_profile):
+        """Verify that a non-existent user ID raises."""
+        from authentication.models import User
+        with pytest.raises(User.DoesNotExist):
+            create_commit(
+                user_id=99999,
+                connection_profile_id=connection_profile.id,
+                sql_command="INSERT INTO t(id) VALUES (1)",
+            )
+
+    def test_no_commit_created_on_execution_failure(self, user, connection_profile, mock_psycopg2_connect, mock_inverse_engine):
+        """Verify that if SQL execution fails, no CommitEvent is created."""
+        mock_psycopg2_connect._mock_cursor.execute.side_effect = Exception("fail")
+        initial = CommitEvent.objects.filter(connection_profile=connection_profile).count()
+        with pytest.raises(Exception):
+            create_commit(
+                user_id=user.id,
+                connection_profile_id=connection_profile.id,
+                sql_command="INSERT INTO t(id) VALUES (1)",
+            )
+        assert CommitEvent.objects.filter(connection_profile=connection_profile).count() == initial
 
 
 class TestListAndGetCommits:
@@ -228,6 +360,36 @@ class TestListAndGetCommits:
         result = get_commit(user_id=user.id, version_id="non-existent-id")
         assert result is None
 
+    def test_list_empty_for_profile_with_no_commits(self, user, connection_profile):
+        """Verify empty list is returned when no commits exist."""
+        results = list_commits(user_id=user.id, connection_profile_id=connection_profile.id)
+        assert results == []
+
+    def test_get_commit_wrong_user(self, user, other_user, connection_profile, mock_psycopg2_connect, mock_s3, mock_inverse_engine):
+        """Verify that another user cannot get someone else's commit."""
+        result = create_commit(
+            user_id=user.id,
+            connection_profile_id=connection_profile.id,
+            sql_command="INSERT INTO t(id) VALUES (1)",
+        )
+        fetched = get_commit(user_id=other_user.id, version_id=result["version_id"])
+        assert fetched is None
+
+    def test_get_commit_returns_all_fields(self, user, connection_profile, mock_psycopg2_connect, mock_s3, mock_inverse_engine):
+        """Verify get_commit returns all expected fields."""
+        result = create_commit(
+            user_id=user.id,
+            connection_profile_id=connection_profile.id,
+            sql_command="INSERT INTO t(id) VALUES (1)",
+        )
+        fetched = get_commit(user_id=user.id, version_id=result["version_id"])
+        assert "version_id" in fetched
+        assert "seq" in fetched
+        assert "sql_command" in fetched
+        assert "status" in fetched
+        assert "timestamp" in fetched
+        assert "connection_profile_id" in fetched
+
 
 class TestEndToEndCommitTracking:
     """System-level tests for commit tracking."""
@@ -256,7 +418,6 @@ class TestEndToEndCommitTracking:
         """TC_67 — Query execution flow: SELECT does not create commit, write does."""
         from fastapi_backend.app.services.query_service import execute_read_sql
 
-        # SELECT should not create a commit
         execute_read_sql(
             user_id=user.id,
             connection_profile_id=connection_profile.id,
@@ -264,7 +425,6 @@ class TestEndToEndCommitTracking:
         )
         assert CommitEvent.objects.filter(connection_profile=connection_profile).count() == 0
 
-        # Write should create a commit
         create_commit(
             user_id=user.id,
             connection_profile_id=connection_profile.id,
@@ -281,8 +441,122 @@ class TestEndToEndCommitTracking:
                 sql_command=f"INSERT INTO t(id) VALUES ({i})",
             )
 
-        # Simulate restart: use a completely fresh QuerySet
         fresh_commits = CommitEvent.objects.filter(
             connection_profile=connection_profile
         ).order_by("seq").values_list("seq", flat=True)
         assert list(fresh_commits) == [1, 2, 3]
+
+
+class TestKafkaIntegration:
+    """Tests for Kafka integration in the commit service."""
+
+    def test_snapshot_dispatched_to_kafka(
+        self, user, connection_profile, mock_psycopg2_connect, mock_s3,
+        mock_subprocess, mock_inverse_engine, mock_kafka_producer,
+    ):
+        """When Kafka is enabled, snapshot tasks are dispatched async — not uploaded synchronously."""
+        SnapshotPolicy.objects.create(frequency=1, connection_profile=connection_profile)
+
+        create_commit(
+            user_id=user.id,
+            connection_profile_id=connection_profile.id,
+            sql_command="INSERT INTO t(id) VALUES (1)",
+        )
+
+        snapshot_calls = [
+            c for c in mock_kafka_producer.call_args_list
+            if c[0][0] == SNAPSHOT_TASKS
+        ]
+        assert len(snapshot_calls) == 1
+
+        mock_s3["upload"].assert_not_called()
+        mock_subprocess.assert_not_called()
+
+    def test_snapshot_sync_fallback_when_kafka_unavailable(
+        self, user, connection_profile, mock_psycopg2_connect, mock_s3,
+        mock_subprocess, mock_inverse_engine, mock_kafka_producer,
+    ):
+        """When Kafka produce returns False, fall back to synchronous snapshot upload."""
+        mock_kafka_producer.return_value = False
+        SnapshotPolicy.objects.create(frequency=1, connection_profile=connection_profile)
+
+        create_commit(
+            user_id=user.id,
+            connection_profile_id=connection_profile.id,
+            sql_command="INSERT INTO t(id) VALUES (1)",
+        )
+
+        mock_subprocess.assert_called()
+
+    def test_commit_audit_log_produced(
+        self, user, connection_profile, mock_psycopg2_connect, mock_s3,
+        mock_inverse_engine, mock_kafka_producer,
+    ):
+        """Every commit produces an audit log message to the commit-logs topic."""
+        create_commit(
+            user_id=user.id,
+            connection_profile_id=connection_profile.id,
+            sql_command="INSERT INTO t(id) VALUES (1)",
+        )
+
+        audit_calls = [
+            c for c in mock_kafka_producer.call_args_list
+            if c[0][0] == COMMIT_LOGS
+        ]
+        assert len(audit_calls) == 1
+
+    def test_audit_log_failure_does_not_break_commit(
+        self, user, connection_profile, mock_psycopg2_connect, mock_s3,
+        mock_inverse_engine, mock_kafka_producer,
+    ):
+        """If the audit log produce raises, the commit still succeeds."""
+        def produce_side_effect(topic, key, value):
+            if topic == COMMIT_LOGS:
+                raise RuntimeError("Kafka broker down")
+            return True
+
+        mock_kafka_producer.side_effect = produce_side_effect
+
+        result = create_commit(
+            user_id=user.id,
+            connection_profile_id=connection_profile.id,
+            sql_command="INSERT INTO t(id) VALUES (1)",
+        )
+
+        assert result["status"] == "success"
+        assert CommitEvent.objects.filter(version_id=result["version_id"]).exists()
+
+    def test_no_snapshot_means_no_snapshot_task_produced(
+        self, user, connection_profile, mock_psycopg2_connect, mock_s3,
+        mock_inverse_engine, mock_kafka_producer,
+    ):
+        """When no snapshot is triggered, no snapshot-task message is produced."""
+        create_commit(
+            user_id=user.id,
+            connection_profile_id=connection_profile.id,
+            sql_command="INSERT INTO t(id) VALUES (1)",
+        )
+
+        snapshot_calls = [
+            c for c in mock_kafka_producer.call_args_list
+            if c[0][0] == SNAPSHOT_TASKS
+        ]
+        assert len(snapshot_calls) == 0
+
+    def test_multiple_commits_produce_multiple_audit_logs(
+        self, user, connection_profile, mock_psycopg2_connect, mock_s3,
+        mock_inverse_engine, mock_kafka_producer,
+    ):
+        """Verify that N commits produce N audit log messages."""
+        for i in range(3):
+            create_commit(
+                user_id=user.id,
+                connection_profile_id=connection_profile.id,
+                sql_command=f"INSERT INTO t(id) VALUES ({i})",
+            )
+
+        audit_calls = [
+            c for c in mock_kafka_producer.call_args_list
+            if c[0][0] == COMMIT_LOGS
+        ]
+        assert len(audit_calls) == 3

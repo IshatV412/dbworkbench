@@ -9,11 +9,14 @@ Flow:
 5. Finalize INSERT inverse if needed (captures RETURNING rows)
 6. Call Django's record_commit() to atomically persist
    CommitEvent + InverseOperation + conditional Snapshot
-7. If a snapshot was created, trigger the actual pg_dump + S3 upload
+7. If a snapshot was created, dispatch via Kafka for async pg_dump + S3
+   upload.  Falls back to synchronous upload if Kafka is unavailable.
+8. Produce an audit event to the commit-logs topic.
 """
 
 from __future__ import annotations
 
+import logging
 import re
 import uuid
 
@@ -28,6 +31,12 @@ from fastapi_backend.app.services.inverse_engine import (
     CommandCategory,
 )
 from fastapi_backend.app.services.snapshot_service import upload_snapshot_data
+
+from fastapi_backend.app.kafka import producer as kafka_producer
+from fastapi_backend.app.kafka.topics import SNAPSHOT_TASKS, COMMIT_LOGS
+from fastapi_backend.app.kafka.schemas import build_snapshot_task, build_commit_log
+
+logger = logging.getLogger(__name__)
 
 
 _WRITE_KEYWORDS = {"INSERT", "UPDATE", "DELETE", "ALTER", "CREATE", "DROP", "TRUNCATE"}
@@ -116,13 +125,38 @@ def create_commit(
         status="success",
     )
 
-    # 5. If record_commit() created a snapshot record, do the actual pg_dump + S3 upload
+    # 5. If record_commit() created a snapshot record, dispatch async via Kafka.
+    #    Falls back to synchronous upload if Kafka is unavailable so that
+    #    snapshots are never silently skipped.
     snapshot = Snapshot.objects.filter(
         version_id=version_id,
         connection_profile=profile,
     ).first()
     if snapshot:
-        upload_snapshot_data(profile, snapshot.s3_key)
+        key, value = build_snapshot_task(
+            connection_profile_id=profile.id,
+            s3_key=snapshot.s3_key,
+            version_id=version_id,
+            user_id=user.id,
+        )
+        produced = kafka_producer.produce(SNAPSHOT_TASKS, key=key, value=value)
+        if not produced:
+            logger.info("Kafka unavailable, performing synchronous snapshot upload")
+            upload_snapshot_data(profile, snapshot.s3_key)
+
+    # 6. Produce audit log (fire-and-forget, non-critical)
+    try:
+        log_key, log_value = build_commit_log(
+            version_id=commit.version_id,
+            seq=commit.seq,
+            sql_command=commit.sql_command,
+            user_id=user.id,
+            connection_profile_id=profile.id,
+            status=commit.status,
+        )
+        kafka_producer.produce(COMMIT_LOGS, key=log_key, value=log_value)
+    except Exception:
+        logger.debug("Failed to produce commit audit log", exc_info=True)
 
     return {
         "version_id": commit.version_id,

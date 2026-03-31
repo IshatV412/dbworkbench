@@ -1,6 +1,7 @@
 """Tests for FastAPI authentication and protected endpoint access.
 
 Covers: TC_34, TC_35, TC_58, TC_59, TC_73, TC_74, TC_50
+Plus edge cases: malformed tokens, wrong algorithm, missing Bearer prefix.
 """
 
 import os
@@ -89,6 +90,62 @@ class TestGetCurrentUser:
             get_current_user(creds)
         assert exc_info.value.status_code == 401
 
+    def test_missing_user_id_raises_401(self):
+        """Verify that a token with username but no user_id raises 401."""
+        from fastapi import HTTPException
+        from fastapi.security import HTTPAuthorizationCredentials
+
+        payload = {
+            "username": "someone",
+            "exp": datetime.now(timezone.utc) + timedelta(minutes=15),
+        }
+        token = pyjwt.encode(payload, os.environ["JWT_SECRET_KEY"], algorithm="HS256")
+        creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+        with pytest.raises(HTTPException) as exc_info:
+            get_current_user(creds)
+        assert exc_info.value.status_code == 401
+
+    def test_missing_username_raises_401(self):
+        """Verify that a token with user_id but no username raises 401."""
+        from fastapi import HTTPException
+        from fastapi.security import HTTPAuthorizationCredentials
+
+        payload = {
+            "user_id": 1,
+            "exp": datetime.now(timezone.utc) + timedelta(minutes=15),
+        }
+        token = pyjwt.encode(payload, os.environ["JWT_SECRET_KEY"], algorithm="HS256")
+        creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+        with pytest.raises(HTTPException) as exc_info:
+            get_current_user(creds)
+        assert exc_info.value.status_code == 401
+
+    def test_wrong_secret_raises_401(self, user):
+        """Verify that a token signed with a different secret raises 401."""
+        from fastapi import HTTPException
+        from fastapi.security import HTTPAuthorizationCredentials
+
+        payload = {
+            "user_id": user.id,
+            "username": user.username,
+            "exp": datetime.now(timezone.utc) + timedelta(minutes=15),
+        }
+        token = pyjwt.encode(payload, "wrong-secret-key", algorithm="HS256")
+        creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+        with pytest.raises(HTTPException) as exc_info:
+            get_current_user(creds)
+        assert exc_info.value.status_code == 401
+
+    def test_empty_string_token_raises_401(self):
+        """Verify that an empty string token raises 401."""
+        from fastapi import HTTPException
+        from fastapi.security import HTTPAuthorizationCredentials
+
+        creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="")
+        with pytest.raises(HTTPException) as exc_info:
+            get_current_user(creds)
+        assert exc_info.value.status_code == 401
+
 
 # ---------------------------------------------------------------------------
 # FastAPI endpoint tests (async)
@@ -138,6 +195,17 @@ class TestProtectedEndpointsNoAuth:
             response = await client.get("/health")
             assert response.status_code == 200
             assert response.json() == {"status": "ok"}
+
+    @pytest.mark.asyncio
+    async def test_expired_token_rejected_by_endpoint(self, user):
+        """Verify expired token gets 401 from actual endpoint."""
+        token = _make_token(user.id, user.username, expired=True)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            response = await client.get("/connections", headers=_headers(token))
+            assert response.status_code == 401
 
 
 @pytest.mark.django_db(transaction=True)
@@ -225,6 +293,62 @@ class TestAuthenticatedEndpoints:
                 assert data["rowcount"] == 2
                 assert data["status"] == "success"
 
+    @pytest.mark.asyncio
+    async def test_write_via_query_endpoint_rejected(self, user, connection_profile, auth_headers):
+        """Verify that write SQL through the query endpoint returns 400."""
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            response = await client.post(
+                "/query/execute",
+                json={
+                    "connection_profile_id": connection_profile.id,
+                    "sql": "INSERT INTO t VALUES (1)",
+                },
+                headers=auth_headers,
+            )
+            assert response.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_get_nonexistent_commit_returns_404(self, user, auth_headers):
+        """Verify that getting a non-existent commit returns 404."""
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            response = await client.get(
+                "/commits/nonexistent-version-id",
+                headers=auth_headers,
+            )
+            assert response.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_get_nonexistent_anticommand_returns_404(self, user, auth_headers):
+        """Verify that getting a non-existent anticommand returns 404."""
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            response = await client.get(
+                "/anticommands/nonexistent-version-id",
+                headers=auth_headers,
+            )
+            assert response.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_get_nonexistent_connection_returns_404(self, user, auth_headers):
+        """Verify that getting a non-existent connection profile returns 404."""
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            response = await client.get(
+                "/connections/99999",
+                headers=auth_headers,
+            )
+            assert response.status_code == 404
+
 
 class TestAuthProxyRoutes:
     """Tests for the FastAPI auth proxy routes (mocked Django backend)."""
@@ -286,3 +410,38 @@ class TestAuthProxyRoutes:
                     json={"username": "testuser", "password": "testpass"},
                 )
                 assert response.status_code == 503
+
+    @pytest.mark.asyncio
+    async def test_register_proxy_failure(self):
+        """Verify the /auth/register route returns error when Django is unreachable."""
+        import requests as req_lib
+
+        with patch("fastapi_backend.app.routes.auth_routes.requests.request", side_effect=req_lib.ConnectionError):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://testserver",
+            ) as client:
+                response = await client.post(
+                    "/auth/register",
+                    json={"username": "testuser", "password": "testpass", "email": "t@e.com"},
+                )
+                assert response.status_code == 503
+
+    @pytest.mark.asyncio
+    async def test_token_proxy_invalid_credentials(self):
+        """Verify the /auth/token route forwards Django's 401 response."""
+        mock_response = MagicMock()
+        mock_response.ok = False
+        mock_response.status_code = 401
+        mock_response.json.return_value = {"detail": "No active account found"}
+
+        with patch("fastapi_backend.app.routes.auth_routes.requests.request", return_value=mock_response):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://testserver",
+            ) as client:
+                response = await client.post(
+                    "/auth/token",
+                    json={"username": "bad", "password": "wrong"},
+                )
+                assert response.status_code == 401

@@ -1,11 +1,14 @@
 """Tests for Django ORM models — CommitEvent, InverseOperation, Snapshot, SnapshotPolicy.
 
 Covers: TC_08, TC_09
+Plus edge cases: constraints, cascades, defaults, isolation, NULL handling.
 """
 
 import time
 import uuid
 import pytest
+
+from django.db import IntegrityError
 
 from core.models import CommitEvent, InverseOperation, Snapshot, SnapshotPolicy
 from connections.models import ConnectionProfile
@@ -50,8 +53,6 @@ class TestCommitEvent:
 
     def test_version_id_unique_constraint(self, user, connection_profile):
         """Verify that duplicate version_ids raise IntegrityError."""
-        from django.db import IntegrityError
-
         CommitEvent.objects.create(
             version_id="v-dup",
             seq=1,
@@ -72,8 +73,6 @@ class TestCommitEvent:
 
     def test_seq_unique_per_profile_constraint(self, user, connection_profile):
         """Verify that duplicate (connection_profile, seq) raises IntegrityError."""
-        from django.db import IntegrityError
-
         CommitEvent.objects.create(
             version_id="v-seq1",
             seq=10,
@@ -96,6 +95,52 @@ class TestCommitEvent:
         """Verify that timestamp is auto-set on creation."""
         assert commit_event.timestamp is not None
 
+    def test_same_seq_allowed_for_different_profiles(self, user, connection_profile, other_profile):
+        """Verify that two different profiles can have the same seq number."""
+        CommitEvent.objects.create(
+            version_id="v-p1-s1", seq=1,
+            sql_command="SELECT 1", status="success",
+            user=user, connection_profile=connection_profile,
+        )
+        c2 = CommitEvent.objects.create(
+            version_id="v-p2-s1", seq=1,
+            sql_command="SELECT 1", status="success",
+            user=other_profile.user, connection_profile=other_profile,
+        )
+        assert c2.seq == 1  # no IntegrityError
+
+    def test_related_name_commit_events(self, user, connection_profile):
+        """Verify the related_name='commit_events' FK lookup from profile."""
+        CommitEvent.objects.create(
+            version_id="v-rel", seq=1,
+            sql_command="SELECT 1", status="success",
+            user=user, connection_profile=connection_profile,
+        )
+        assert connection_profile.commit_events.count() == 1
+
+    def test_long_sql_command_stored(self, user, connection_profile):
+        """Verify that very long SQL commands are stored without truncation."""
+        long_sql = "INSERT INTO t(data) VALUES ('" + "x" * 10000 + "')"
+        c = CommitEvent.objects.create(
+            version_id="v-long", seq=1,
+            sql_command=long_sql, status="success",
+            user=user, connection_profile=connection_profile,
+        )
+        c.refresh_from_db()
+        assert len(c.sql_command) == len(long_sql)
+
+    def test_cascade_delete_from_user(self, user, connection_profile, commit_event):
+        """Verify that deleting a user cascades through profile to commits."""
+        cid = commit_event.id
+        user.delete()
+        assert not CommitEvent.objects.filter(id=cid).exists()
+
+    def test_cascade_delete_from_profile(self, commit_event, connection_profile):
+        """Verify that deleting a profile cascades to its commits."""
+        cid = commit_event.id
+        connection_profile.delete()
+        assert not CommitEvent.objects.filter(id=cid).exists()
+
 
 class TestInverseOperation:
     """Tests for the InverseOperation model."""
@@ -111,6 +156,33 @@ class TestInverseOperation:
         commit_event.delete()
         assert not InverseOperation.objects.filter(id=inv_id).exists()
 
+    def test_one_to_one_constraint(self, commit_event, inverse_operation):
+        """Verify only one inverse per commit (OneToOneField)."""
+        with pytest.raises(IntegrityError):
+            InverseOperation.objects.create(
+                version_id="v-dup-inv",
+                inverse_sql="SELECT 1",
+                commit=commit_event,
+            )
+
+    def test_reverse_access_from_commit(self, commit_event, inverse_operation):
+        """Verify commit.inverse_operation reverse accessor works."""
+        assert commit_event.inverse_operation == inverse_operation
+
+    def test_long_inverse_sql(self, user, connection_profile):
+        """Verify that very long inverse SQL is stored correctly."""
+        long_inv = "DELETE FROM t WHERE id IN (" + ",".join(str(i) for i in range(5000)) + ")"
+        c = CommitEvent.objects.create(
+            version_id="v-longinv", seq=1,
+            sql_command="TRUNCATE t", status="success",
+            user=user, connection_profile=connection_profile,
+        )
+        inv = InverseOperation.objects.create(
+            version_id=c.version_id, inverse_sql=long_inv, commit=c,
+        )
+        inv.refresh_from_db()
+        assert inv.inverse_sql == long_inv
+
 
 class TestSnapshot:
     """Tests for the Snapshot model."""
@@ -124,6 +196,33 @@ class TestSnapshot:
         """Verify snapshot is linked to the correct connection profile."""
         assert snapshot.connection_profile == connection_profile
 
+    def test_snapshot_auto_timestamp(self, snapshot):
+        """Verify created_at is automatically set."""
+        assert snapshot.created_at is not None
+
+    def test_snapshot_cascade_delete_from_profile(self, snapshot, connection_profile):
+        """Verify deleting a profile cascades to its snapshots."""
+        sid = snapshot.id
+        connection_profile.delete()
+        assert not Snapshot.objects.filter(id=sid).exists()
+
+    def test_multiple_snapshots_per_profile(self, connection_profile, commit_event):
+        """Verify multiple snapshots can exist for the same profile."""
+        Snapshot.objects.create(
+            version_id="v-snap-1", s3_key="snapshots/1/v-snap-1",
+            connection_profile=connection_profile,
+        )
+        Snapshot.objects.create(
+            version_id="v-snap-2", s3_key="snapshots/1/v-snap-2",
+            connection_profile=connection_profile,
+        )
+        assert Snapshot.objects.filter(connection_profile=connection_profile).count() >= 2
+
+    def test_snapshot_s3_key_stored(self, snapshot, connection_profile, commit_event):
+        """Verify s3_key is stored and retrievable."""
+        expected = f"snapshots/{connection_profile.id}/{commit_event.version_id}"
+        assert snapshot.s3_key == expected
+
 
 class TestSnapshotPolicy:
     """Tests for the SnapshotPolicy model."""
@@ -134,10 +233,25 @@ class TestSnapshotPolicy:
 
     def test_policy_one_to_one(self, connection_profile, snapshot_policy):
         """Verify only one policy per connection profile."""
-        from django.db import IntegrityError
-
         with pytest.raises(IntegrityError):
             SnapshotPolicy.objects.create(
                 frequency=10,
                 connection_profile=connection_profile,
             )
+
+    def test_policy_auto_timestamp(self, snapshot_policy):
+        """Verify last_updated is auto-set."""
+        assert snapshot_policy.last_updated is not None
+
+    def test_policy_cascade_delete_from_profile(self, snapshot_policy, connection_profile):
+        """Verify deleting a profile cascades to its policy."""
+        pid = snapshot_policy.id
+        connection_profile.delete()
+        assert not SnapshotPolicy.objects.filter(id=pid).exists()
+
+    def test_policy_different_profiles_independent(self, connection_profile, other_profile):
+        """Verify each profile can have its own policy."""
+        p1 = SnapshotPolicy.objects.create(frequency=3, connection_profile=connection_profile)
+        p2 = SnapshotPolicy.objects.create(frequency=10, connection_profile=other_profile)
+        assert p1.frequency == 3
+        assert p2.frequency == 10

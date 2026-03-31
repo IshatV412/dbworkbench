@@ -220,3 +220,16 @@ def mock_subprocess():
     with patch("fastapi_backend.app.services.snapshot_service.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(returncode=0)
         yield mock_run
+
+
+@pytest.fixture
+def mock_kafka_producer():
+    """Patch the Kafka producer module to simulate an enabled broker.
+
+    Sets ``is_enabled()`` → True and ``produce()`` → True by default.
+    Tests can override ``produce.return_value = False`` to simulate
+    Kafka being unavailable (triggering sync fallback).
+    """
+    with patch("fastapi_backend.app.kafka.producer.is_enabled", return_value=True), \
+         patch("fastapi_backend.app.kafka.producer.produce", return_value=True) as mock_produce:
+        yield mock_produce
