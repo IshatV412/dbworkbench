@@ -28,7 +28,6 @@ def make_commit(
             user_id=current_user["user_id"],
             connection_profile_id=request.connection_profile_id,
             sql_command=request.sql_command,
-            inverse_sql=request.inverse_sql,
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

@@ -83,7 +83,6 @@ class ExecuteSQLResponse(BaseModel):
 class CreateCommitRequest(BaseModel):
     connection_profile_id: int
     sql_command: str
-    inverse_sql: str
 
 
 class CommitResponse(BaseModel):
