@@ -96,3 +96,13 @@ coverage.xml
 
 # ini files
 config.ini
+
+# Charts
+_charts/
+
+# Scripts
+start-all.ps1
+
+# Reports
+generate_report.py
+Group5*.pdf
