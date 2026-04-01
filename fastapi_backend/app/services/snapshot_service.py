@@ -59,6 +59,8 @@ def upload_snapshot_data(connection_profile: ConnectionProfile, s3_key: str) -> 
         subprocess.run(
             [
                 "pg_dump",
+                "--clean",
+                "--if-exists",
                 "-h", connection_profile.host,
                 "-p", str(connection_profile.port),
                 "-U", connection_profile.db_username,
