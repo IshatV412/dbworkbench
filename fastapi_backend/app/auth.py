@@ -23,8 +23,8 @@ def get_current_user(
     try:
         payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
         user_id = payload.get("user_id")
-        username = payload.get("username")
-        if user_id is None or username is None:
+        username = payload.get("username", f"user_{user_id}")
+        if user_id is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid token payload",

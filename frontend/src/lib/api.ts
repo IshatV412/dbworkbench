@@ -16,6 +16,8 @@ export class ApiError extends Error {
   }
 }
 
+let _refreshing: Promise<TokenResponse> | null = null;
+
 async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   const { method = "GET", body, headers = {} } = opts;
 
@@ -36,17 +38,47 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
     fetchOpts.body = JSON.stringify(body);
   }
 
-  const res = await fetch(`${API_BASE}${path}`, fetchOpts);
+  let res = await fetch(`${API_BASE}${path}`, fetchOpts);
+
+  if (res.status === 204) return undefined as T;
+
+  // On 401, try refreshing the token once (skip for auth endpoints)
+  if (res.status === 401 && !path.startsWith("/auth/")) {
+    const refresh = localStorage.getItem("refresh_token");
+    if (refresh) {
+      try {
+        if (!_refreshing) {
+          _refreshing = (async () => {
+            const r = await fetch(`${API_BASE}/auth/token/refresh`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ refresh }),
+            });
+            if (!r.ok) throw new Error("refresh failed");
+            return r.json();
+          })();
+        }
+        const data: TokenResponse = await _refreshing;
+        _refreshing = null;
+        localStorage.setItem("access_token", data.access);
+        if (data.refresh) localStorage.setItem("refresh_token", data.refresh);
+        headers["Authorization"] = `Bearer ${data.access}`;
+        res = await fetch(`${API_BASE}${path}`, { ...fetchOpts, headers: { ...fetchOpts.headers as Record<string, string>, Authorization: `Bearer ${data.access}` } });
+      } catch {
+        _refreshing = null;
+        localStorage.removeItem("access_token");
+        localStorage.removeItem("refresh_token");
+      }
+    } else {
+      localStorage.removeItem("access_token");
+    }
+  }
 
   if (res.status === 204) return undefined as T;
 
   const json = await res.json().catch(() => null);
 
   if (!res.ok) {
-    if (res.status === 401) {
-      localStorage.removeItem("access_token");
-      localStorage.removeItem("refresh_token");
-    }
     throw new ApiError(res.status, json?.detail || json || res.statusText);
   }
 
