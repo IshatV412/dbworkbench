@@ -13,6 +13,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 # Load environment variables from the shared Django project .env
+# Load both; the first one loaded takes precedence (dotenv won't overwrite existing vars).
 _django_backend_dir = Path(__file__).resolve().parent.parent.parent / "django_backend"
 _env_candidates = [
     _django_backend_dir / "django_backend" / ".env",
@@ -21,7 +22,6 @@ _env_candidates = [
 for _env_path in _env_candidates:
     if _env_path.exists():
         load_dotenv(_env_path)
-        break
 
 # Add django_backend to the Python path so Django can resolve its apps
 if str(_django_backend_dir) not in sys.path:
