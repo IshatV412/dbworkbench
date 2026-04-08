@@ -1,4 +1,4 @@
-"""
+﻿"""
 WEAVE-DB: Test Suite for the Inverse Engine
 ============================================
 Tests every command category using a MockCursor / MockConnection so the
@@ -16,9 +16,9 @@ import unittest
 from unittest.mock import MagicMock, patch, call
 from collections import defaultdict
 
-# ── Minimal stubs so we can import inverse_engine without psycopg2 ────────
+# ΓöÇΓöÇ Minimal stubs so we can import inverse_engine without psycopg2 ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
-# ── Import under test ──────────────────────────────────────────────────────
+# ΓöÇΓöÇ Import under test ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 from inverse_engine import (
     InverseEngine, InverseCommand, CommandCategory,
     _classify, _normalise, _quote_ident, _quote_literal,
@@ -41,7 +41,7 @@ class MockCursor:
 
     def __init__(self, result_map: dict):
         """
-        result_map : dict mapping a SQL-snippet substring → list of rows
+        result_map : dict mapping a SQL-snippet substring ΓåÆ list of rows
         """
         self._map   = result_map
         self.description = None
@@ -643,8 +643,8 @@ if __name__ == "__main__":
 
     print()
     if result.wasSuccessful():
-        print("✅  All tests passed.")
+        print("Γ£à  All tests passed.")
     else:
-        print(f"❌  {len(result.failures)} failure(s), "
+        print(f"Γ¥î  {len(result.failures)} failure(s), "
               f"{len(result.errors)} error(s).")
     sys.exit(0 if result.wasSuccessful() else 1)

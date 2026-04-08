@@ -199,10 +199,10 @@ export function listCommits(connectionProfileId: number): Promise<Commit[]> {
   return request(`/commits?connection_profile_id=${connectionProfileId}`);
 }
 
-export function createCommit(connectionProfileId: number, sqlCommand: string, inverseSql: string): Promise<Commit> {
+export function createCommit(connectionProfileId: number, sqlCommand: string): Promise<Commit> {
   return request("/commits", {
     method: "POST",
-    body: { connection_profile_id: connectionProfileId, sql_command: sqlCommand, inverse_sql: inverseSql },
+    body: { connection_profile_id: connectionProfileId, sql_command: sqlCommand },
   });
 }
 
@@ -211,7 +211,7 @@ export function createCommit(connectionProfileId: number, sqlCommand: string, in
 export interface RollbackResult {
   rolled_back_to: string;
   snapshot_restored: string | null;
-  anti_commands_applied: number;
+  commands_applied: number;
   status: string;
 }
 

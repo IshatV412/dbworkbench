@@ -4,6 +4,7 @@ import {
   createConnection as apiCreateConnection,
   deleteConnection as apiDeleteConnection,
   executeSQL,
+  createCommit as apiCreateCommit,
   listCommits,
   listSnapshots,
   createSnapshot as apiCreateSnapshot,
@@ -17,6 +18,13 @@ import {
   type CreateConnectionRequest,
   type RollbackResult,
 } from "@/lib/api";
+
+const _WRITE_FIRST_TOKENS = new Set(["INSERT","UPDATE","DELETE","CREATE","DROP","ALTER","TRUNCATE","RENAME"]);
+
+function isWriteSQL(sql: string): boolean {
+  const first = sql.trim().split(/\s+/)[0]?.toUpperCase();
+  return _WRITE_FIRST_TOKENS.has(first);
+}
 
 export type { ConnectionProfile, QueryResult, Commit, Snapshot };
 
@@ -213,11 +221,29 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const runQuery = useCallback(async (sql: string): Promise<QueryResult> => {
     if (!activeConnectionRef.current) throw new Error("No active connection");
     const start = performance.now();
+
+    if (isWriteSQL(sql)) {
+      // Route writes through the commit pipeline (auto-generates inverse)
+      const commit = await apiCreateCommit(activeConnectionRef.current.id, sql);
+      const elapsed = Math.round(performance.now() - start);
+      // Refresh commits in background
+      refreshCommits();
+      const synthetic: QueryResult = {
+        columns: ["version_id", "seq", "status"],
+        rows: [[commit.version_id, String(commit.seq), commit.status]],
+        rowcount: 1,
+        status: "success",
+      };
+      (synthetic as any).elapsed = elapsed;
+      setQueryResult(synthetic);
+      return synthetic;
+    }
+
     const result = await executeSQL(activeConnectionRef.current.id, sql);
     (result as any).elapsed = Math.round(performance.now() - start);
     setQueryResult(result as any);
     return result as any;
-  }, []);
+  }, [refreshCommits]);
 
   // ---------- Rollback ----------
   const rollback = useCallback(async (targetVersionId: string) => {

@@ -1,4 +1,4 @@
-"""
+﻿"""
 WEAVE-DB: Inverse Command Generation Engine
 ============================================
 Generates reversible "anti-commands" for every category of PostgreSQL
@@ -17,7 +17,7 @@ DDL  : RENAME TABLE  (special form of ALTER TABLE)
 
 Design notes
 ------------
-* The engine is *stateful* – for DML it must query the live database BEFORE
+* The engine is *stateful* ΓÇô for DML it must query the live database BEFORE
   executing the command so it can capture the "before image" of affected rows.
 * For DDL it must query catalog tables (information_schema / pg_catalog) to
   reconstruct the inverse.
@@ -26,7 +26,7 @@ Design notes
 * All SQL strings are parameterized where possible; where raw SQL must be
   constructed (DDL), values are sanitised through pg_catalog lookups rather
   than trusting the input string.
-* This module has NO side-effects on its own – it only *generates* SQL.
+* This module has NO side-effects on its own ΓÇô it only *generates* SQL.
   Execution is delegated to the caller.
 
 Integration surface (what other subsystems call)
@@ -35,7 +35,7 @@ Integration surface (what other subsystems call)
 
     engine = InverseEngine(connection)           # pass an open psycopg2 conn
     inv    = engine.generate(sql, params=None)   # call BEFORE executing sql
-    # … store inv … execute sql … commit …
+    # ΓÇª store inv ΓÇª execute sql ΓÇª commit ΓÇª
 """
 
 from __future__ import annotations
@@ -73,7 +73,7 @@ class CommandCategory(Enum):
     DROP_SCHEMA     = auto()
     CREATE_VIEW     = auto()
     DROP_VIEW       = auto()
-    UNKNOWN         = auto()   # SELECT or unsupported – no inverse generated
+    UNKNOWN         = auto()   # SELECT or unsupported ΓÇô no inverse generated
 
 
 @dataclass
@@ -126,9 +126,9 @@ class InverseCommand:
 
 def _normalise(sql: str) -> str:
     """Strip comments, collapse whitespace, uppercase keywords."""
-    # Remove block comments  /* … */
+    # Remove block comments  /* ΓÇª */
     sql = re.sub(r"/\*.*?\*/", " ", sql, flags=re.DOTALL)
-    # Remove line comments  -- …
+    # Remove line comments  -- ΓÇª
     sql = re.sub(r"--[^\n]*", " ", sql)
     return " ".join(sql.split())
 
@@ -155,7 +155,7 @@ def _classify(sql: str) -> CommandCategory:
     if s.startswith("TRUNCATE"):
         return CommandCategory.TRUNCATE
 
-    # CREATE …
+    # CREATE ΓÇª
     if s.startswith("CREATE"):
         if re.search(r"\bCREATE\s+(UNIQUE\s+)?INDEX\b", s):
             return CommandCategory.CREATE_INDEX
@@ -169,7 +169,7 @@ def _classify(sql: str) -> CommandCategory:
             return CommandCategory.CREATE_TABLE
         return CommandCategory.UNKNOWN
 
-    # DROP …
+    # DROP ΓÇª
     if s.startswith("DROP"):
         if re.search(r"\bDROP\s+TABLE\b", s):
             return CommandCategory.DROP_TABLE
@@ -205,7 +205,7 @@ def _quote_literal(val) -> str:
     """
     Produce a PostgreSQL string literal from a Python value.
     Uses dollar-quoting for strings containing single quotes.
-    None → NULL.
+    None ΓåÆ NULL.
     """
     if val is None:
         return "NULL"
@@ -272,7 +272,7 @@ class InverseEngine:
 
         Returns
         -------
-        InverseCommand  — always returned; check .is_reversible and .category.
+        InverseCommand  ΓÇö always returned; check .is_reversible and .category.
         If category is UNKNOWN the steps list will be empty.
         """
         sql_clean = _normalise(sql)
@@ -373,7 +373,7 @@ class InverseEngine:
         Parameters
         ----------
         inv           : The InverseCommand from _inverse_insert.
-        returned_rows : List of dicts (column→value) from RETURNING *.
+        returned_rows : List of dicts (columnΓåÆvalue) from RETURNING *.
         """
         table = inv._table
         pks   = inv._pks
@@ -395,7 +395,7 @@ class InverseEngine:
                     f"DELETE FROM {_quote_ident(table)} WHERE {conditions};"
                 )
         else:
-            # No PK – use ctid if present, else full-row match (fragile)
+            # No PK ΓÇô use ctid if present, else full-row match (fragile)
             if "ctid" in (returned_rows[0] if returned_rows else {}):
                 for row in returned_rows:
                     steps.append(
@@ -415,7 +415,7 @@ class InverseEngine:
                 inv.is_reversible = False
                 inv.notes += (
                     " WARNING: No primary key found. "
-                    "Full-row match delete used – may affect duplicate rows."
+                    "Full-row match delete used ΓÇô may affect duplicate rows."
                 )
 
         inv.steps = steps
@@ -428,7 +428,7 @@ class InverseEngine:
         --------
         1. Parse the table name and WHERE clause from the UPDATE.
         2. SELECT * FROM table WHERE <same-where> to capture before-images.
-        3. Build one UPDATE … SET … WHERE pk=… per affected row restoring
+        3. Build one UPDATE ΓÇª SET ΓÇª WHERE pk=ΓÇª per affected row restoring
            original values.
         """
         table, where_clause = _parse_update_table_where(sql_norm)
@@ -456,7 +456,7 @@ class InverseEngine:
                         f"WHERE {pk_cond};"
                     )
         elif before_rows:
-            # No PK – use full-row WHERE
+            # No PK ΓÇô use full-row WHERE
             for row in before_rows:
                 set_clause = ", ".join(
                     f"{_quote_ident(col)} = {_quote_literal(val)}"
@@ -470,7 +470,7 @@ class InverseEngine:
 
         reversible = bool(pks and before_rows)
         notes = "" if reversible else (
-            "No primary key – inverse UPDATE may affect wrong rows if duplicates exist."
+            "No primary key ΓÇô inverse UPDATE may affect wrong rows if duplicates exist."
         )
 
         return InverseCommand(
@@ -514,7 +514,7 @@ class InverseEngine:
         Inverse of TRUNCATE: re-INSERT all rows from before-image.
 
         TRUNCATE is instant but destructive.  We snapshot the entire table.
-        For large tables this can be expensive – operators should ensure
+        For large tables this can be expensive ΓÇô operators should ensure
         snapshot frequency is high enough to avoid needing to replay many
         TRUNCATE inverses.
         """
@@ -545,7 +545,7 @@ class InverseEngine:
         )
 
     # ------------------------------------------------------------------
-    # DDL handlers – CREATE TABLE / DROP TABLE
+    # DDL handlers ΓÇô CREATE TABLE / DROP TABLE
     # ------------------------------------------------------------------
 
     def _inverse_create_table(self, sql_norm: str, sql_orig: str, params) -> InverseCommand:
@@ -591,7 +591,7 @@ class InverseEngine:
             )
 
     # ------------------------------------------------------------------
-    # DDL handlers – ALTER TABLE
+    # DDL handlers ΓÇô ALTER TABLE
     # ------------------------------------------------------------------
 
     def _inverse_alter_table(self, sql_norm: str, sql_orig: str, params) -> InverseCommand:
@@ -600,16 +600,16 @@ class InverseEngine:
 
         Supported sub-types
         -------------------
-        ADD COLUMN          → DROP COLUMN
-        DROP COLUMN         → ADD COLUMN (reconstructed from pg_catalog)
-        RENAME COLUMN       → RENAME COLUMN (reversed names)
-        ALTER COLUMN TYPE   → ALTER COLUMN TYPE (to original type)
-        ADD CONSTRAINT      → DROP CONSTRAINT
-        DROP CONSTRAINT     → ADD CONSTRAINT (reconstructed)
-        SET DEFAULT         → DROP DEFAULT  (or restore original default)
-        DROP DEFAULT        → SET DEFAULT   (restore original default)
-        SET NOT NULL        → DROP NOT NULL
-        DROP NOT NULL       → SET NOT NULL
+        ADD COLUMN          ΓåÆ DROP COLUMN
+        DROP COLUMN         ΓåÆ ADD COLUMN (reconstructed from pg_catalog)
+        RENAME COLUMN       ΓåÆ RENAME COLUMN (reversed names)
+        ALTER COLUMN TYPE   ΓåÆ ALTER COLUMN TYPE (to original type)
+        ADD CONSTRAINT      ΓåÆ DROP CONSTRAINT
+        DROP CONSTRAINT     ΓåÆ ADD CONSTRAINT (reconstructed)
+        SET DEFAULT         ΓåÆ DROP DEFAULT  (or restore original default)
+        DROP DEFAULT        ΓåÆ SET DEFAULT   (restore original default)
+        SET NOT NULL        ΓåÆ DROP NOT NULL
+        DROP NOT NULL       ΓåÆ SET NOT NULL
         """
         s = sql_norm.upper()
         table_ref = _parse_alter_table_name(sql_norm)
@@ -747,7 +747,7 @@ class InverseEngine:
 
     def _inverse_set_default(self, sql_norm, sql_orig, schema, tname):
         col = _parse_alter_column_name_generic(sql_norm)
-        # Drop the newly set default → inverse is DROP DEFAULT
+        # Drop the newly set default ΓåÆ inverse is DROP DEFAULT
         step = (
             f"ALTER TABLE {_qualified_ident(schema, tname)} "
             f"ALTER COLUMN {_quote_ident(col)} DROP DEFAULT;"
@@ -810,7 +810,7 @@ class InverseEngine:
         )
 
     # ------------------------------------------------------------------
-    # DDL handlers – INDEX
+    # DDL handlers ΓÇô INDEX
     # ------------------------------------------------------------------
 
     def _inverse_create_index(self, sql_norm: str, sql_orig: str, params) -> InverseCommand:
@@ -836,7 +836,7 @@ class InverseEngine:
         )
 
     # ------------------------------------------------------------------
-    # DDL handlers – SEQUENCE
+    # DDL handlers ΓÇô SEQUENCE
     # ------------------------------------------------------------------
 
     def _inverse_create_sequence(self, sql_norm: str, sql_orig: str, params) -> InverseCommand:
@@ -895,7 +895,7 @@ class InverseEngine:
         )
 
     # ------------------------------------------------------------------
-    # DDL handlers – SCHEMA / VIEW
+    # DDL handlers ΓÇô SCHEMA / VIEW
     # ------------------------------------------------------------------
 
     def _inverse_create_schema(self, sql_norm: str, sql_orig: str, params) -> InverseCommand:
@@ -926,7 +926,7 @@ class InverseEngine:
                 before_image={"previous_def": existing_def},
                 notes="Restores previous view definition.",
             )
-        # Brand-new view → inverse is DROP
+        # Brand-new view ΓåÆ inverse is DROP
         step = f"DROP VIEW IF EXISTS {_quote_ident(view_name)};"
         return InverseCommand(CommandCategory.CREATE_VIEW, sql_orig, [step])
 
@@ -1329,7 +1329,7 @@ def _parse_alter_drop_column_name(sql: str) -> str:
     return _unquote(m.group(1)) if m else "unknown_col"
 
 
-# --- ALTER TABLE … RENAME COLUMN old TO new ---
+# --- ALTER TABLE ΓÇª RENAME COLUMN old TO new ---
 def _parse_rename_column(sql: str):
     m = re.search(
         r"RENAME\s+COLUMN\s+(\"[^\"]+\"|\w+)\s+TO\s+(\"[^\"]+\"|\w+)",
@@ -1340,7 +1340,7 @@ def _parse_rename_column(sql: str):
     return "old_col", "new_col"
 
 
-# --- ALTER TABLE … ALTER COLUMN col TYPE ---
+# --- ALTER TABLE ΓÇª ALTER COLUMN col TYPE ---
 def _parse_alter_column_type_name(sql: str) -> str:
     m = re.search(r"ALTER\s+COLUMN\s+(\"[^\"]+\"|\w+)\s+TYPE", sql, re.IGNORECASE)
     return _unquote(m.group(1)) if m else "unknown_col"

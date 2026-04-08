@@ -83,7 +83,6 @@ class ExecuteSQLResponse(BaseModel):
 class CreateCommitRequest(BaseModel):
     connection_profile_id: int
     sql_command: str
-    inverse_sql: str
 
 
 class CommitResponse(BaseModel):
@@ -140,5 +139,5 @@ class RollbackRequest(BaseModel):
 class RollbackResponse(BaseModel):
     rolled_back_to: str
     snapshot_restored: str | None = None
-    anti_commands_applied: int = 0
+    commands_applied: int = 0
     status: str = "success"

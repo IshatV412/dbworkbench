@@ -8,11 +8,6 @@ import os
 
 # JWT — must match Django's SIMPLE_JWT['SIGNING_KEY']
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY")
-if not JWT_SECRET_KEY:
-    raise RuntimeError(
-        "JWT_SECRET_KEY environment variable is required but not set. "
-        "It must match Django's SIMPLE_JWT['SIGNING_KEY']."
-    )
 JWT_ALGORITHM = "HS256"
 
 # AWS S3

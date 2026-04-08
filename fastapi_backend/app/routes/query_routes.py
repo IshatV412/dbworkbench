@@ -21,7 +21,7 @@ def execute(
             connection_profile_id=request.connection_profile_id,
             sql=request.sql,
         )
-    except (ValueError, PermissionError) as e:
+    except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
