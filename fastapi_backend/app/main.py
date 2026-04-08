@@ -12,8 +12,10 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from django.db import close_old_connections
+from django.db import connections as django_connections
 
 from fastapi_backend.app.routes.auth_routes import router as auth_router
 from fastapi_backend.app.routes.connection_routes import router as connection_router
@@ -72,6 +74,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def reset_db_connections(request: Request, call_next):
+    """Close stale Django ORM connections before each request."""
+    close_old_connections()
+    for conn in django_connections.all():
+        conn.close_if_unusable_or_obsolete()
+    response = await call_next(request)
+    close_old_connections()
+    return response
+
 
 # Routers
 app.include_router(auth_router)

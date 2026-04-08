@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import psycopg2
+
 from authentication.models import User
 from connections.models import ConnectionProfile
 
@@ -28,6 +30,16 @@ def create_connection_profile(
     db_password: str,
 ) -> dict:
     """Create a new ConnectionProfile. Password is Fernet-encrypted on save."""
+    # Validate connection before saving
+    try:
+        conn = psycopg2.connect(
+            host=host, port=port, dbname=database_name,
+            user=db_username, password=db_password, connect_timeout=5,
+        )
+        conn.close()
+    except Exception as e:
+        raise ValueError(f"Cannot connect to database: {e}")
+
     user = User.objects.get(id=user_id)
     profile = ConnectionProfile.objects.create(
         user=user,
