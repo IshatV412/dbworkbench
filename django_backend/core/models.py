@@ -9,6 +9,7 @@ class CommitEvent(models.Model):
     seq = models.PositiveIntegerField(db_index=True, default=0)
     timestamp = models.DateTimeField(auto_now_add=True)
     sql_command = models.TextField()
+    commit_hash = models.CharField(max_length=64, blank=True, default='')
     status = models.CharField(max_length=20)
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,

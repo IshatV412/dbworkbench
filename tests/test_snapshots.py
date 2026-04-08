@@ -193,23 +193,23 @@ class TestSnapshotLinearGrowth:
 class TestSnapshotUploadRestore:
     """Tests for upload_snapshot_data and restore_snapshot_data with mocks."""
 
-    def test_upload_snapshot_data(self, connection_profile, mock_subprocess, mock_s3):
+    def test_upload_snapshot_data(self, connection_profile, mock_subprocess, mock_s3, mock_snapshot_conn):
         """TC_46 ΓÇö Verify that snapshot upload calls pg_dump and S3 upload."""
         upload_snapshot_data(connection_profile, "snapshots/1/v1")
         mock_subprocess.assert_called_once()
         call_args = mock_subprocess.call_args
-        assert "pg_dump" in call_args[0][0]
+        assert "pg_dump" in call_args[0][0][0]  # substring check on executable path
         mock_s3["upload"].assert_called_once()
 
-    def test_restore_snapshot_data(self, connection_profile, mock_subprocess, mock_s3):
+    def test_restore_snapshot_data(self, connection_profile, mock_subprocess, mock_s3, mock_snapshot_conn):
         """Verify that snapshot restore calls S3 download and psql."""
         restore_snapshot_data("snapshots/1/v1", connection_profile)
         mock_s3["download"].assert_called_once()
         mock_subprocess.assert_called_once()
         call_args = mock_subprocess.call_args
-        assert "psql" in call_args[0][0]
+        assert "psql" in call_args[0][0][0]  # substring check on executable path
 
-    def test_upload_passes_correct_credentials(self, connection_profile, mock_subprocess, mock_s3):
+    def test_upload_passes_correct_credentials(self, connection_profile, mock_subprocess, mock_s3, mock_snapshot_conn):
         """Verify pg_dump is called with the correct host, port, username, database."""
         upload_snapshot_data(connection_profile, "snapshots/1/v1")
         call_args = mock_subprocess.call_args[0][0]
@@ -218,7 +218,7 @@ class TestSnapshotUploadRestore:
         assert connection_profile.db_username in call_args
         assert connection_profile.database_name in call_args
 
-    def test_restore_passes_correct_credentials(self, connection_profile, mock_subprocess, mock_s3):
+    def test_restore_passes_correct_credentials(self, connection_profile, mock_subprocess, mock_s3, mock_snapshot_conn):
         """Verify psql is called with the correct host, port, username, database."""
         restore_snapshot_data("snapshots/1/v1", connection_profile)
         call_args = mock_subprocess.call_args[0][0]
@@ -227,33 +227,33 @@ class TestSnapshotUploadRestore:
         assert connection_profile.db_username in call_args
         assert connection_profile.database_name in call_args
 
-    def test_upload_pgpassword_in_env(self, connection_profile, mock_subprocess, mock_s3):
+    def test_upload_pgpassword_in_env(self, connection_profile, mock_subprocess, mock_s3, mock_snapshot_conn):
         """Verify PGPASSWORD is set in the environment for pg_dump."""
         upload_snapshot_data(connection_profile, "snapshots/1/v1")
         call_env = mock_subprocess.call_args[1]["env"]
         assert "PGPASSWORD" in call_env
         assert call_env["PGPASSWORD"] == connection_profile.get_decrypted_password()
 
-    def test_upload_pg_dump_failure_raises(self, connection_profile, mock_s3):
+    def test_upload_pg_dump_failure_raises(self, connection_profile, mock_s3, mock_snapshot_conn):
         """Verify that a pg_dump failure propagates as an exception."""
         with patch("fastapi_backend.app.services.snapshot_service.subprocess.run") as mock_run:
             mock_run.side_effect = subprocess.CalledProcessError(1, "pg_dump")
             with pytest.raises(subprocess.CalledProcessError):
                 upload_snapshot_data(connection_profile, "snapshots/1/v1")
 
-    def test_restore_psql_failure_raises(self, connection_profile, mock_s3):
+    def test_restore_psql_failure_raises(self, connection_profile, mock_s3, mock_snapshot_conn):
         """Verify that a psql failure propagates as an exception."""
         with patch("fastapi_backend.app.services.snapshot_service.subprocess.run") as mock_run:
             mock_run.side_effect = subprocess.CalledProcessError(1, "psql")
             with pytest.raises(subprocess.CalledProcessError):
                 restore_snapshot_data("snapshots/1/v1", connection_profile)
 
-    def test_upload_check_true(self, connection_profile, mock_subprocess, mock_s3):
+    def test_upload_check_true(self, connection_profile, mock_subprocess, mock_s3, mock_snapshot_conn):
         """Verify pg_dump is called with check=True to catch failures."""
         upload_snapshot_data(connection_profile, "snapshots/1/v1")
         assert mock_subprocess.call_args[1]["check"] is True
 
-    def test_restore_check_true(self, connection_profile, mock_subprocess, mock_s3):
+    def test_restore_check_true(self, connection_profile, mock_subprocess, mock_s3, mock_snapshot_conn):
         """Verify psql is called with check=True to catch failures."""
         restore_snapshot_data("snapshots/1/v1", connection_profile)
         assert mock_subprocess.call_args[1]["check"] is True

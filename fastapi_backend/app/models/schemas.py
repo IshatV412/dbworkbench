@@ -89,6 +89,7 @@ class CommitResponse(BaseModel):
     version_id: str
     seq: int
     sql_command: str
+    commit_hash: str = ""
     status: str
     timestamp: datetime
     connection_profile_id: int
@@ -98,6 +99,7 @@ class CommitListItem(BaseModel):
     version_id: str
     seq: int
     sql_command: str
+    commit_hash: str = ""
     status: str
     timestamp: datetime
 

@@ -190,6 +190,7 @@ export interface Commit {
   version_id: string;
   seq: number;
   sql_command: string;
+  commit_hash: string;
   status: string;
   timestamp: string;
   connection_profile_id?: number;

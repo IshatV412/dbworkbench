@@ -211,10 +211,23 @@ def mock_psycopg2_connect():
 
 @pytest.fixture
 def mock_s3():
-    """Patch all S3 utility functions."""
+    """Patch all S3 utility functions.
+
+    The download mock writes a valid pickle+gzip snapshot so that
+    restore_snapshot_data can unpickle it.
+    """
+    import gzip as _gzip
+    import pickle as _pickle
+
+    def _mock_download(s3_key, local_path):
+        snapshot = {"schema_ddl": "-- test schema\n", "tables": {}}
+        with open(local_path, "wb") as f:
+            f.write(_gzip.compress(_pickle.dumps(snapshot)))
+
     with patch("fastapi_backend.app.utils.s3_utils._get_client") as mock_client, \
          patch("fastapi_backend.app.services.snapshot_service.upload_snapshot") as mock_upload, \
-         patch("fastapi_backend.app.services.snapshot_service.download_snapshot") as mock_download:
+         patch("fastapi_backend.app.services.snapshot_service.download_snapshot",
+               side_effect=_mock_download) as mock_download:
         yield {
             "client": mock_client,
             "upload": mock_upload,
@@ -226,8 +239,23 @@ def mock_s3():
 def mock_subprocess():
     """Patch subprocess.run for pg_dump/psql calls."""
     with patch("fastapi_backend.app.services.snapshot_service.subprocess.run") as mock_run:
-        mock_run.return_value = MagicMock(returncode=0)
+        mock_run.return_value = MagicMock(returncode=0, stdout="-- test schema DDL\n")
         yield mock_run
+
+
+@pytest.fixture
+def mock_snapshot_conn():
+    """Patch get_user_connection inside snapshot_service for upload/restore."""
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_cursor.description = [("id",), ("name",)]
+    mock_cursor.fetchall.return_value = []
+    mock_conn.cursor.return_value = mock_cursor
+    with patch("fastapi_backend.app.services.snapshot_service.get_user_connection",
+               return_value=mock_conn) as mock_get:
+        mock_get._mock_conn = mock_conn
+        mock_get._mock_cursor = mock_cursor
+        yield mock_get
 
 
 @pytest.fixture

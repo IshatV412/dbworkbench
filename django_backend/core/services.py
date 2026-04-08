@@ -1,3 +1,5 @@
+import hashlib
+
 from django.db import transaction
 from django.db.models import Max
 from .models import CommitEvent, InverseOperation, Snapshot, SnapshotPolicy
@@ -14,10 +16,21 @@ def record_commit(version_id, sql_command, inverse_sql, user, connection_profile
         ).aggregate(Max('seq'))['seq__max']
         next_seq = (last_seq or 0) + 1
 
+        # Hash chain: SHA-256(prev_hash : sql_command : version_id)
+        prev_commit = CommitEvent.objects.filter(
+            connection_profile=connection_profile,
+            seq=next_seq - 1,
+        ).first()
+        prev_hash = prev_commit.commit_hash if prev_commit else ""
+        commit_hash = hashlib.sha256(
+            f"{prev_hash}:{sql_command}:{version_id}".encode()
+        ).hexdigest()
+
         commit = CommitEvent.objects.create(
             version_id=version_id,
             seq=next_seq,
             sql_command=sql_command,
+            commit_hash=commit_hash,
             status=status,
             user=user,
             connection_profile=connection_profile,

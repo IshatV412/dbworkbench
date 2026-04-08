@@ -166,6 +166,7 @@ def create_commit(
         "version_id": commit.version_id,
         "seq": commit.seq,
         "sql_command": commit.sql_command,
+        "commit_hash": commit.commit_hash,
         "status": commit.status,
         "timestamp": commit.timestamp,
         "connection_profile_id": profile.id,
@@ -184,6 +185,7 @@ def list_commits(user_id: int, connection_profile_id: int) -> list[dict]:
             "version_id": c.version_id,
             "seq": c.seq,
             "sql_command": c.sql_command,
+            "commit_hash": c.commit_hash,
             "status": c.status,
             "timestamp": c.timestamp,
         }
@@ -202,6 +204,7 @@ def get_commit(user_id: int, version_id: str) -> dict | None:
         "version_id": c.version_id,
         "seq": c.seq,
         "sql_command": c.sql_command,
+        "commit_hash": c.commit_hash,
         "status": c.status,
         "timestamp": c.timestamp,
         "connection_profile_id": c.connection_profile_id,

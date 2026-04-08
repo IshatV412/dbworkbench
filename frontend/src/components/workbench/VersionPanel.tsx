@@ -162,6 +162,11 @@ export function VersionPanel() {
                               </span>
                             </div>
                             <p className="text-[10px] text-foreground/60 mt-0.5 font-mono truncate">{c.sql_command}</p>
+                            {c.commit_hash && (
+                              <p className="text-[9px] text-muted-foreground/50 mt-0.5 font-mono truncate" title={c.commit_hash}>
+                                #{c.commit_hash.slice(0, 8)}
+                              </p>
+                            )}
                           </div>
                         </div>
                       </button>
@@ -169,6 +174,12 @@ export function VersionPanel() {
 
                       {isExpanded && (
                         <div className="mx-3 ml-8 mb-2 p-2.5 bg-secondary/50 border border-border rounded-md space-y-2 animate-fade-in">
+                          {c.commit_hash && (
+                            <div className="flex items-center gap-1.5 mb-2">
+                              <span className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">Hash</span>
+                              <code className="text-[9px] font-mono text-foreground/70 bg-editor-bg px-1.5 py-0.5 rounded border border-border select-all">{c.commit_hash}</code>
+                            </div>
+                          )}
                           <div>
                             <div className="flex items-center justify-between mb-1">
                               <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">SQL</span>
