@@ -125,24 +125,28 @@ def create_commit(
         status="success",
     )
 
-    # 5. If record_commit() created a snapshot record, dispatch async via Kafka.
-    #    Falls back to synchronous upload if Kafka is unavailable so that
-    #    snapshots are never silently skipped.
+    # 5. If record_commit() created a snapshot record, upload to S3 synchronously
+    #    and also notify Kafka for audit/downstream consumers.
     snapshot = Snapshot.objects.filter(
         version_id=version_id,
         connection_profile=profile,
     ).first()
     if snapshot:
-        key, value = build_snapshot_task(
-            connection_profile_id=profile.id,
-            s3_key=snapshot.s3_key,
-            version_id=version_id,
-            user_id=user.id,
-        )
-        produced = kafka_producer.produce(SNAPSHOT_TASKS, key=key, value=value)
-        if not produced:
-            logger.info("Kafka unavailable, performing synchronous snapshot upload")
-            upload_snapshot_data(profile, snapshot.s3_key)
+        # Always upload synchronously — cannot rely on a consumer being up
+        upload_snapshot_data(profile, snapshot.s3_key)
+        logger.info("Snapshot uploaded to S3: %s", snapshot.s3_key)
+
+        # Notify Kafka (fire-and-forget, non-critical)
+        try:
+            key, value = build_snapshot_task(
+                connection_profile_id=profile.id,
+                s3_key=snapshot.s3_key,
+                version_id=version_id,
+                user_id=user.id,
+            )
+            kafka_producer.produce(SNAPSHOT_TASKS, key=key, value=value)
+        except Exception:
+            logger.debug("Failed to produce snapshot task to Kafka", exc_info=True)
 
     # 6. Produce audit log (fire-and-forget, non-critical)
     try:

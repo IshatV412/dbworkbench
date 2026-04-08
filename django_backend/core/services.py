@@ -29,10 +29,10 @@ def record_commit(version_id, sql_command, inverse_sql, user, connection_profile
             commit=commit,
         )
 
-        try:
-            policy = SnapshotPolicy.objects.get(connection_profile=connection_profile)
-        except SnapshotPolicy.DoesNotExist:
-            return commit
+        policy, _ = SnapshotPolicy.objects.get_or_create(
+            connection_profile=connection_profile,
+            defaults={"frequency": 5},
+        )
 
         last_snapshot = Snapshot.objects.filter(
             connection_profile=connection_profile,

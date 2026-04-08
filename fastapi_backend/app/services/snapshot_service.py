@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 import subprocess
 import tempfile
 import uuid
@@ -20,6 +21,22 @@ from fastapi_backend.app.utils.s3_utils import upload_snapshot, download_snapsho
 from fastapi_backend.app.config import SNAPSHOT_FREQUENCY_DEFAULT
 
 logger = logging.getLogger(__name__)
+
+
+def _find_pg_bin(name: str) -> str:
+    """Return the full path to a PostgreSQL binary (pg_dump / psql)."""
+    found = shutil.which(name)
+    if found:
+        return found
+    # Windows default install location
+    for ver in ("18", "17", "16", "15", "14"):
+        candidate = os.path.join(
+            os.environ.get("ProgramFiles", r"C:\Program Files"),
+            "PostgreSQL", ver, "bin", f"{name}.exe",
+        )
+        if os.path.isfile(candidate):
+            return candidate
+    raise FileNotFoundError(f"'{name}' not found on PATH or in standard PostgreSQL install directories")
 
 
 # -- Frequency management ------------------------------------------------------
@@ -62,7 +79,7 @@ def upload_snapshot_data(connection_profile: ConnectionProfile, s3_key: str) -> 
 
         subprocess.run(
             [
-                "pg_dump",
+                _find_pg_bin("pg_dump"),
                 "--clean",
                 "--if-exists",
                 "-h", connection_profile.host,
@@ -98,7 +115,7 @@ def restore_snapshot_data(s3_key: str, connection_profile: ConnectionProfile) ->
 
         subprocess.run(
             [
-                "psql",
+                _find_pg_bin("psql"),
                 "-h", connection_profile.host,
                 "-p", str(connection_profile.port),
                 "-U", connection_profile.db_username,
