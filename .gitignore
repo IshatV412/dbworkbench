@@ -106,3 +106,8 @@ start-all.ps1
 # Reports
 generate_report.py
 Group5*.pdf
+*.txt
+# Code Review Graph local config
+.mcp.json
+CLAUDE.md
+.code-review-graph/

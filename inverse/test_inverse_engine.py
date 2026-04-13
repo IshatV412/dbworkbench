@@ -557,6 +557,131 @@ class TestViewInverse(unittest.TestCase):
         self.assertIn("CREATE VIEW", inv.steps[0])
 
 
+class TestDropTableSerialPK(unittest.TestCase):
+    """DROP TABLE whose PK column is SERIAL must include a CREATE SEQUENCE step."""
+
+    def test_serial_pk_generates_sequence_step(self):
+        conn = MockConnection({
+            "INFORMATION_SCHEMA.COLUMNS": [
+                # id is a SERIAL: data_type=integer, default=nextval(...)
+                ("id",   "integer",          None, 10, 0, "NO",
+                 "nextval('users_id_seq'::regclass)", "int4"),
+                ("name", "character varying", 100, None, None, "YES", None, "varchar"),
+            ],
+            "TABLE_CONSTRAINTS": [
+                ("PRIMARY KEY", "pk_users", "id"),
+            ],
+            "KEY_COLUMN_USAGE": [("id",)],
+            "PRIMARY KEY":            [("id",)],
+            # pg_sequences row: (seqstart, seqincrement, seqmax, seqmin, seqcache, seqcycle)
+            "PG_SEQUENCES":           [(1, 1, 9223372036854775807, 1, 1, False)],
+        })
+        eng = InverseEngine(conn)
+        inv = eng.generate("DROP TABLE users")
+        self.assertEqual(inv.category, CommandCategory.DROP_TABLE)
+        # Must have at least two steps: CREATE SEQUENCE first, CREATE TABLE second
+        self.assertGreaterEqual(len(inv.steps), 2)
+        self.assertIn("CREATE SEQUENCE", inv.steps[0])
+        self.assertIn("users_id_seq",    inv.steps[0])
+        self.assertIn("CREATE TABLE",    inv.steps[-1])
+
+    def test_serial_pk_sequence_comes_before_table(self):
+        """Sequence step must be ordered before CREATE TABLE so the default works."""
+        conn = MockConnection({
+            "INFORMATION_SCHEMA.COLUMNS": [
+                ("id", "integer", None, 10, 0, "NO",
+                 "nextval('orders_id_seq'::regclass)", "int4"),
+            ],
+            "TABLE_CONSTRAINTS": [("PRIMARY KEY", "pk_orders", "id")],
+            "KEY_COLUMN_USAGE": [("id",)],
+            "PRIMARY KEY":      [("id",)],
+            "PG_SEQUENCES":     [(1, 1, 9223372036854775807, 1, 1, False)],
+        })
+        eng = InverseEngine(conn)
+        inv = eng.generate("DROP TABLE orders")
+        seq_idx   = next(i for i, s in enumerate(inv.steps) if "CREATE SEQUENCE" in s)
+        table_idx = next(i for i, s in enumerate(inv.steps) if "CREATE TABLE"    in s)
+        self.assertLess(seq_idx, table_idx)
+
+    def test_non_serial_pk_no_sequence_step(self):
+        """Plain INTEGER PK (no nextval default) must NOT generate a sequence step."""
+        conn = MockConnection({
+            "INFORMATION_SCHEMA.COLUMNS": [
+                ("id", "integer", None, 10, 0, "NO", None, "int4"),
+            ],
+            "TABLE_CONSTRAINTS": [("PRIMARY KEY", "pk_t", "id")],
+            "KEY_COLUMN_USAGE": [("id",)],
+            "PRIMARY KEY":      [("id",)],
+        })
+        eng = InverseEngine(conn)
+        inv = eng.generate("DROP TABLE t")
+        self.assertEqual(len(inv.steps), 1)
+        self.assertIn("CREATE TABLE", inv.steps[0])
+        self.assertNotIn("CREATE SEQUENCE", inv.steps[0])
+
+
+class TestViewInverseSchemaQualified(unittest.TestCase):
+    """VIEW inverse commands must handle schema-qualified names correctly."""
+
+    def test_create_view_schema_qualified_drop_uses_qualified_name(self):
+        conn = MockConnection({
+            "PG_VIEWS":    [],    # view doesn't exist yet
+            "PRIMARY KEY": [],
+        })
+        eng = InverseEngine(conn)
+        inv = eng.generate("CREATE VIEW analytics.v_summary AS SELECT * FROM orders")
+        self.assertEqual(inv.category, CommandCategory.CREATE_VIEW)
+        self.assertIn("DROP VIEW", inv.steps[0])
+        # Must use qualified identifier, NOT "analytics.v_summary" as a single token
+        self.assertIn('"analytics"."v_summary"', inv.steps[0])
+
+    def test_drop_view_schema_qualified_create_uses_qualified_name(self):
+        conn = MockConnection({
+            "PG_VIEWS":    [("SELECT item, qty FROM orders",)],
+            "PRIMARY KEY": [],
+        })
+        eng = InverseEngine(conn)
+        inv = eng.generate("DROP VIEW analytics.v_summary")
+        self.assertEqual(inv.category, CommandCategory.DROP_VIEW)
+        self.assertIn("CREATE VIEW", inv.steps[0])
+        self.assertIn('"analytics"."v_summary"', inv.steps[0])
+
+    def test_drop_view_schema_qualified_no_catalog(self):
+        conn = MockConnection({
+            "PG_VIEWS":    [],
+            "PRIMARY KEY": [],
+        })
+        eng = InverseEngine(conn)
+        inv = eng.generate("DROP VIEW analytics.v_summary")
+        self.assertFalse(inv.is_reversible)
+        # Error note should mention the qualified name
+        self.assertIn("v_summary", inv.notes)
+
+    def test_create_or_replace_view_existing_restores_previous_def(self):
+        """CREATE OR REPLACE VIEW whose view already exists → restore prior definition."""
+        conn = MockConnection({
+            "PG_VIEWS":    [("SELECT id FROM orders",)],
+            "PRIMARY KEY": [],
+        })
+        eng = InverseEngine(conn)
+        inv = eng.generate("CREATE OR REPLACE VIEW v_orders AS SELECT id, qty FROM orders")
+        self.assertEqual(inv.category, CommandCategory.CREATE_VIEW)
+        # Inverse must restore the old definition, not DROP
+        self.assertNotIn("DROP VIEW", inv.steps[0])
+        self.assertIn("CREATE OR REPLACE VIEW", inv.steps[0])
+        self.assertIn("SELECT id FROM orders", inv.steps[0])
+
+    def test_create_or_replace_view_new_drops(self):
+        """CREATE OR REPLACE VIEW when view doesn't exist yet → inverse is DROP."""
+        conn = MockConnection({
+            "PG_VIEWS":    [],
+            "PRIMARY KEY": [],
+        })
+        eng = InverseEngine(conn)
+        inv = eng.generate("CREATE OR REPLACE VIEW v_orders AS SELECT id FROM orders")
+        self.assertIn("DROP VIEW", inv.steps[0])
+
+
 class TestSelectIsIgnored(unittest.TestCase):
 
     def test_select(self):

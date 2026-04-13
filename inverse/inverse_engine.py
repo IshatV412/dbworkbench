@@ -570,13 +570,14 @@ class InverseEngine:
         table_ref = _parse_drop_object_name(sql_norm, "TABLE")
         schema, tname = _split_schema_table(table_ref)
 
-        ddl = self._reconstruct_table_ddl(schema or "public", tname)
+        ddl, seq_ddls = self._reconstruct_table_ddl(schema or "public", tname)
         if ddl:
+            steps = seq_ddls + [ddl]
             return InverseCommand(
                 category     = CommandCategory.DROP_TABLE,
                 forward_sql  = sql_orig,
-                steps        = [ddl],
-                before_image = {"ddl": ddl},
+                steps        = steps,
+                before_image = {"ddl": ddl, "seq_ddls": seq_ddls},
                 notes        = "Recreates table structure only; data must come from snapshot.",
             )
         else:
@@ -915,33 +916,37 @@ class InverseEngine:
         )
 
     def _inverse_create_view(self, sql_norm: str, sql_orig: str, params) -> InverseCommand:
-        view_name = _parse_create_view_name(sql_norm)
+        view_ref = _parse_create_view_name(sql_norm)
+        schema, vname = _split_schema_table(view_ref)
+        qualified = _qualified_ident(schema, vname)
         # Was this CREATE OR REPLACE replacing an existing view?
-        existing_def = self._get_view_definition(view_name)
+        existing_def = self._get_view_definition(schema, vname)
         if existing_def and "OR REPLACE" in sql_norm.upper():
             # The inverse is to restore the previous view definition
-            step = f"CREATE OR REPLACE VIEW {_quote_ident(view_name)} AS {existing_def};"
+            step = f"CREATE OR REPLACE VIEW {qualified} AS {existing_def};"
             return InverseCommand(
                 CommandCategory.CREATE_VIEW, sql_orig, [step],
                 before_image={"previous_def": existing_def},
                 notes="Restores previous view definition.",
             )
-        # Brand-new view ΓåÆ inverse is DROP
-        step = f"DROP VIEW IF EXISTS {_quote_ident(view_name)};"
+        # Brand-new view → inverse is DROP
+        step = f"DROP VIEW IF EXISTS {qualified};"
         return InverseCommand(CommandCategory.CREATE_VIEW, sql_orig, [step])
 
     def _inverse_drop_view(self, sql_norm: str, sql_orig: str, params) -> InverseCommand:
-        view_name = _parse_drop_object_name(sql_norm, "VIEW")
-        view_def  = self._get_view_definition(view_name)
+        view_ref = _parse_drop_object_name(sql_norm, "VIEW")
+        schema, vname = _split_schema_table(view_ref)
+        qualified = _qualified_ident(schema, vname)
+        view_def  = self._get_view_definition(schema, vname)
         if view_def:
-            step = f"CREATE VIEW {_quote_ident(view_name)} AS {view_def};"
+            step = f"CREATE VIEW {qualified} AS {view_def};"
             return InverseCommand(
                 CommandCategory.DROP_VIEW, sql_orig, [step],
                 before_image={"view_def": view_def},
             )
         return InverseCommand(
             CommandCategory.DROP_VIEW, sql_orig, is_reversible=False,
-            notes=f"View '{view_name}' definition not found in pg_views.",
+            notes=f"View '{qualified}' definition not found in pg_views.",
         )
 
     # ------------------------------------------------------------------
@@ -991,8 +996,15 @@ class InverseEngine:
         cols = [d[0] for d in cur.description]
         return [dict(zip(cols, row)) for row in rows]
 
-    def _reconstruct_table_ddl(self, schema: str, table: str) -> Optional[str]:
-        """Build CREATE TABLE DDL from pg_catalog."""
+    def _reconstruct_table_ddl(self, schema: str, table: str):
+        """Build CREATE TABLE DDL from pg_catalog.
+
+        Returns a tuple ``(table_ddl, seq_ddls)`` where *seq_ddls* is a list
+        of ``CREATE SEQUENCE`` statements that must be executed **before**
+        *table_ddl* (needed when SERIAL/BIGSERIAL columns own sequences that
+        were implicitly dropped alongside the table).  Returns ``(None, [])``
+        when the table cannot be found in the catalog.
+        """
         cur = self._cur()
         cur.execute("""
             SELECT
@@ -1010,9 +1022,10 @@ class InverseEngine:
         """, (schema, table))
         cols = cur.fetchall()
         if not cols:
-            return None
+            return None, []
 
         col_defs = []
+        seq_ddls: list = []
         for _row in cols:
             if isinstance(_row, dict):
                 col_name, dtype, char_len, num_prec, num_scale, nullable, default, udt = (
@@ -1025,6 +1038,17 @@ class InverseEngine:
             typedef = _build_type(dtype, char_len, num_prec, num_scale, udt)
             parts   = [_quote_ident(col_name), typedef]
             if default:
+                # SERIAL columns store a nextval(...) default; the owned
+                # sequence is implicitly dropped with the table, so we must
+                # reconstruct it as a pre-step.
+                if default.lower().startswith("nextval("):
+                    m = re.match(r"nextval\('([^']+)'", default, re.IGNORECASE)
+                    if m:
+                        raw_seq = m.group(1)          # e.g. public.users_id_seq
+                        _, seq_bare = _split_schema_table(raw_seq)
+                        seq_ddl = self._reconstruct_sequence_ddl(seq_bare or raw_seq)
+                        if seq_ddl:
+                            seq_ddls.append(seq_ddl)
                 parts.append(f"DEFAULT {default}")
             if nullable == "NO":
                 parts.append("NOT NULL")
@@ -1053,11 +1077,12 @@ class InverseEngine:
             )
 
         qualified = _qualified_ident(schema, table)
-        return (
+        table_ddl = (
             f"CREATE TABLE IF NOT EXISTS {qualified} (\n"
             + ",\n".join(col_defs)
             + "\n);"
         )
+        return table_ddl, seq_ddls
 
     def _get_column_definition(self, schema: str, table: str, col: str) -> Optional[str]:
         cur = self._cur()
@@ -1197,11 +1222,12 @@ class InverseEngine:
             "max_value":    row[4],
         }
 
-    def _get_view_definition(self, view_name: str) -> Optional[str]:
+    def _get_view_definition(self, schema: Optional[str], view_name: str) -> Optional[str]:
         cur = self._cur()
         cur.execute("""
-            SELECT definition FROM pg_views WHERE viewname = %s
-        """, (view_name,))
+            SELECT definition FROM pg_views
+            WHERE schemaname = %s AND viewname = %s
+        """, (schema or "public", view_name))
         row = cur.fetchone()
         if not row:
             return None
